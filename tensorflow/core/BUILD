@@ -1773,7 +1773,6 @@ filegroup(
         "//tensorflow/core/platform:legacy_srcs_no_runtime",
         "//tensorflow/core/profiler:mobile_srcs",
         "//tensorflow/core/lib/bfloat16:bfloat16.h",
-        "//tensorflow/core/lib/bfloat16:bfloat16.cc",
         "//tensorflow/core/lib/gtl:legacy_lib_gtl_all_headers",
         "//tensorflow/core/lib/random:legacy_lib_random_all_headers",
         "//tensorflow/core/lib/random:legacy_lib_random_all_srcs",
