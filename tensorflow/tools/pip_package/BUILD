@@ -168,7 +168,7 @@ filegroup(
         "@eigen_archive//:COPYING.MPL2",
         "@enum34_archive//:LICENSE",
         "@farmhash_archive//:COPYING",
-        "@fft2d//:fft2d/readme2d.txt",
+        "@fft2d//:readme2d.txt",
         "@flatbuffers//:LICENSE.txt",
         "@functools32_archive//:LICENSE",
         "@gast_archive//:PKG-INFO",
@@ -215,15 +215,6 @@ filegroup(
         "//conditions:default": [
             "@com_github_googleapis_googleapis//:LICENSE",
             "@com_github_googlecloudplatform_google_cloud_cpp//:LICENSE",
-        ],
-    }) + select({
-        "//tensorflow:android": [],
-        "//tensorflow:ios": [],
-        "//tensorflow:linux_s390x": [],
-        "//tensorflow:windows": [],
-        "//tensorflow:no_kafka_support": [],
-        "//conditions:default": [
-            "@kafka//:LICENSE",
         ],
     }) + select({
         "//tensorflow/core/kernels:xsmm": [

@@ -607,10 +607,11 @@ def tf_repositories(path_prefix = "", tf_repo_name = ""):
     tf_http_archive(
         name = "fft2d",
         build_file = clean_dep("//third_party/fft2d:fft2d.BUILD"),
-        sha256 = "ada7e99087c4ed477bfdf11413f2ba8db8a840ba9bbf8ac94f4f3972e2a7cec9",
+        sha256 = "5f4dabc2ae21e1f537425d58a49cdca1c49ea11db0d6271e2a4b27e9697548eb",
+        strip_prefix = "OouraFFT-1.0",
         urls = [
-            "https://storage.googleapis.com/mirror.tensorflow.org/www.kurims.kyoto-u.ac.jp/~ooura/fft2d.tgz",
-            "http://www.kurims.kyoto-u.ac.jp/~ooura/fft2d.tgz",
+            "https://storage.googleapis.com/mirror.tensorflow.org/github.com/petewarden/OouraFFT/archive/v1.0.tar.gz",
+            "https://github.com/petewarden/OouraFFT/archive/v1.0.tar.gz",
         ],
     )
 
@@ -635,18 +636,6 @@ def tf_repositories(path_prefix = "", tf_repo_name = ""):
         urls = [
             "https://storage.googleapis.com/mirror.tensorflow.org/github.com/nvidia/nccl/archive/0ceaec9cee96ae7658aa45686853286651f36384.tar.gz",
             "https://github.com/nvidia/nccl/archive/0ceaec9cee96ae7658aa45686853286651f36384.tar.gz",
-        ],
-    )
-
-    tf_http_archive(
-        name = "kafka",
-        build_file = clean_dep("//third_party:kafka/BUILD"),
-        patch_file = clean_dep("//third_party/kafka:config.patch"),
-        sha256 = "cc6ebbcd0a826eec1b8ce1f625ffe71b53ef3290f8192b6cae38412a958f4fd3",
-        strip_prefix = "librdkafka-0.11.5",
-        urls = [
-            "https://storage.googleapis.com/mirror.tensorflow.org/github.com/edenhill/librdkafka/archive/v0.11.5.tar.gz",
-            "https://github.com/edenhill/librdkafka/archive/v0.11.5.tar.gz",
         ],
     )
 
