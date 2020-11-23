@@ -85,8 +85,8 @@ cc_library(
     hdrs = glob(["include/*"]),
     copts = [
         "-fexceptions",
-        "-DUSE_MKL",
-        "-DUSE_CBLAS",
+        "-UUSE_MKL",
+        "-UUSE_CBLAS",
     ] + select({
         "@org_tensorflow//tensorflow:linux_x86_64": [
             "-fopenmp",  # only works with gcc
