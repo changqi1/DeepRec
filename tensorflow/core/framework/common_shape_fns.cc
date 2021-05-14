@@ -663,7 +663,8 @@ Status ShapeFromDimensions(DimensionHandle batch_dim,
 namespace {
 
 Status Conv2DShapeImpl(shape_inference::InferenceContext* c,
-                       bool supports_explicit_padding) {
+                       bool supports_explicit_padding,
+                       string padding_attr_name = "explicit_paddings") {
   string data_format_str, filter_format_str;
   if (!c->GetAttr("data_format", &data_format_str).ok()) {
     data_format_str = "NHWC";
@@ -774,7 +775,7 @@ Status Conv2DShapeImpl(shape_inference::InferenceContext* c,
 
   std::vector<int64> explicit_paddings;
   if (supports_explicit_padding) {
-    Status s = c->GetAttr("explicit_paddings", &explicit_paddings);
+    Status s = c->GetAttr(padding_attr_name, &explicit_paddings);
     // Use the default value, which is an empty list, if the attribute is not
     // found. Otherwise return the error to the caller.
     if (!s.ok() && !errors::IsNotFound(s)) {
@@ -821,6 +822,11 @@ Status Conv2DShapeWithExplicitPadding(shape_inference::InferenceContext* c) {
 // padding.
 Status Conv2DShape(shape_inference::InferenceContext* c) {
   return Conv2DShapeImpl(c, false);
+}
+
+// Shape function for QuantizedConv2D-like operations
+Status QuantizedConv2DShape(shape_inference::InferenceContext* c) {
+  return Conv2DShapeImpl(c, true, "padding_list");
 }
 
 // TODO(mjanusz): Unify all conv/pooling shape functions.
