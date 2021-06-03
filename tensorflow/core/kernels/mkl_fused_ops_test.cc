@@ -1297,6 +1297,242 @@ TEST_F(BiasCacheTest, Conv2DBiasCacheTest) {
              max_filter, min_output, max_output, expected, true);
 }
 
+class MklQuantizedConv2DTest : public OpsTestBase {
+ public:
+  template <typename Tinput, typename Toutput>
+  void Verify(string node_name, string node_op, Tensor& image, Tensor& filter,
+              Tensor& bias, Tensor& min_input, Tensor& max_input,
+              Tensor& min_filter, Tensor& max_filter, Tensor& min_output,
+              Tensor& max_output, Tensor& expected, const bool is_filter_const,
+              float alpha) {
+    DataType in_dtype = DataTypeToEnum<Tinput>::v();
+    DataType out_dtype = DataTypeToEnum<Toutput>::v();
+    const int stride = 1;
+
+    TF_EXPECT_OK(NodeDefBuilder(node_name, node_op)
+                     .Input(FakeInput(in_dtype))  // Input
+                     .Input(FakeInput(DT_QINT8))  // Filter
+                     .Input(FakeInput(DT_FLOAT))  // Bias
+                     .Input(FakeInput(DT_FLOAT))  // Min-input
+                     .Input(FakeInput(DT_FLOAT))  // Max-input
+                     .Input(FakeInput(DT_FLOAT))  // Min-filter
+                     .Input(FakeInput(DT_FLOAT))  // Max-filter
+                     .Input(FakeInput(DT_FLOAT))  // Min-output
+                     .Input(FakeInput(DT_FLOAT))  // Max-output
+                     .Input(FakeInput(DT_UINT8))  // MKL second tensor
+                     .Input(FakeInput(DT_UINT8))  // MKL second tensor
+                     .Input(FakeInput(DT_UINT8))  // MKL second tensor
+                     .Input(FakeInput(DT_UINT8))  // MKL second tensor
+                     .Input(FakeInput(DT_UINT8))  // MKL second tensor
+                     .Input(FakeInput(DT_UINT8))  // MKL second tensor
+                     .Input(FakeInput(DT_UINT8))  // MKL second tensor
+                     .Input(FakeInput(DT_UINT8))  // MKL second tensor
+                     .Input(FakeInput(DT_UINT8))  // MKL second tensor
+                     .Attr("Tinput", in_dtype)
+                     .Attr("Tfilter", DT_QINT8)
+                     .Attr("Tbias", DT_FLOAT)
+                     .Attr("T", DT_QINT8)
+                     .Attr("out_type", out_dtype)
+                     .Attr("data_format", "NHWC")
+                     .Attr("strides", {1, stride, stride, 1})
+                     .Attr("is_filter_const", is_filter_const)
+                     .Attr("is_bias_const", true)
+                     .Attr("padding", "VALID")
+                     .Attr("_kernel", "QuantizedMklOp")
+                     .Attr("alpha", alpha)
+                     .Finalize(node_def()));
+    TF_EXPECT_OK(InitOp());
+
+    // Setting up inputs and execute
+    AddInputFromArray<Tinput>(image.shape(), image.flat<Tinput>());
+    AddInputFromArray<qint8>(filter.shape(), filter.flat<qint8>());
+    AddInputFromArray<float>(bias.shape(), bias.flat<float>());
+    AddInputFromArray<float>(min_input.shape(), min_input.flat<float>());
+    AddInputFromArray<float>(max_input.shape(), max_input.flat<float>());
+    AddInputFromArray<float>(min_filter.shape(), min_filter.flat<float>());
+    AddInputFromArray<float>(max_filter.shape(), max_filter.flat<float>());
+    AddInputFromArray<float>(min_output.shape(), min_output.flat<float>());
+    AddInputFromArray<float>(max_output.shape(), max_output.flat<float>());
+    AddInputFromArray<uint8>(dummy_shape, dummy_tensor);
+    AddInputFromArray<uint8>(dummy_shape, dummy_tensor);
+    AddInputFromArray<uint8>(dummy_shape, dummy_tensor);
+    AddInputFromArray<uint8>(dummy_shape, dummy_tensor);
+    AddInputFromArray<uint8>(dummy_shape, dummy_tensor);
+    AddInputFromArray<uint8>(dummy_shape, dummy_tensor);
+    AddInputFromArray<uint8>(dummy_shape, dummy_tensor);
+    AddInputFromArray<uint8>(dummy_shape, dummy_tensor);
+    AddInputFromArray<uint8>(dummy_shape, dummy_tensor);
+
+    TF_ASSERT_OK(RunOpKernel());
+
+    // Compare output to expected results
+    const Tensor& output_new = *GetOutput(0);
+    const Tensor& output_layout_new = *GetOutput(3);
+    CommonTestUtilities<Toutput> conv_comp_new;
+    conv_comp_new.ConvertAndCompareIntegral(out_dtype, output_new,
+                                            output_layout_new, expected);
+  }
+
+ protected:
+  const int depth = 1;
+  const int image_width = 4;
+  const int image_height = 3;
+  const int image_batch_count = 1;
+  const int kFilterSize = 3;
+  const int kFilterCount = 1;
+};
+
+TEST_F(MklQuantizedConv2DTest, WithBiasAndReluAndRequantizeTest_U8in) {
+  Tensor image(DT_QUINT8,
+               {image_batch_count, image_height, image_width, depth});
+  test::FillValues<quint8>(&image, {1, 2, 0, 4, 5, 6, 0, 8, 9, 10, 0, 120});
+
+  Tensor filter(DT_QINT8, {kFilterSize, kFilterSize, depth, kFilterCount});
+  test::FillValues<qint8>(&filter, {1, 0, -1, 1, 0, -1, 1, 0, -1});
+
+  Tensor bias(DT_FLOAT, {kFilterCount});
+  test::FillValues<float>(&bias, {1});
+
+  Tensor min_input(DT_FLOAT, {1});
+  test::FillValues<float>(&min_input, {0});
+
+  Tensor max_input(DT_FLOAT, {1});
+  test::FillValues<float>(&max_input, {255.0f});
+
+  Tensor min_filter(DT_FLOAT, {1});
+  test::FillValues<float>(&min_filter, {-127.0f});
+
+  Tensor max_filter(DT_FLOAT, {1});
+  test::FillValues<float>(&max_filter, {127.0f});
+
+  Tensor min_output(DT_FLOAT, {1});
+  test::FillValues<float>(&min_output, {0});
+
+  Tensor max_output(DT_FLOAT, {1});
+  test::FillValues<float>(&max_output, {255.0f});
+
+  Tensor expected(DT_QUINT8, TensorShape({1, 1, 2, 1}));
+  test::FillValues<quint8>(&expected, {16, 0});
+
+  Verify<quint8, quint8>("MklQuantizedConv2DWithBiasAndReluAndRequantize",
+                         "_MklQuantizedConv2DWithBiasAndReluAndRequantize",
+                         image, filter, bias, min_input, max_input, min_filter,
+                         max_filter, min_output, max_output, expected, true, 0);
+}
+
+TEST_F(MklQuantizedConv2DTest, WithBiasAndReluAndRequantizeTest_S8in) {
+  Tensor image(DT_QINT8, {image_batch_count, image_height, image_width, depth});
+  test::FillValues<qint8>(&image, {1, 2, 0, 4, 5, 6, 0, 8, 9, 10, 0, 120});
+
+  Tensor filter(DT_QINT8, {kFilterSize, kFilterSize, depth, kFilterCount});
+  test::FillValues<qint8>(&filter, {1, 0, -1, 1, 0, -1, 1, 0, -1});
+
+  Tensor bias(DT_FLOAT, {kFilterCount});
+  test::FillValues<float>(&bias, {1});
+
+  Tensor min_input(DT_FLOAT, {1});
+  test::FillValues<float>(&min_input, {-127.0f});
+
+  Tensor max_input(DT_FLOAT, {1});
+  test::FillValues<float>(&max_input, {127.0f});
+
+  Tensor min_filter(DT_FLOAT, {1});
+  test::FillValues<float>(&min_filter, {-127.0f});
+
+  Tensor max_filter(DT_FLOAT, {1});
+  test::FillValues<float>(&max_filter, {127.0f});
+
+  Tensor min_output(DT_FLOAT, {1});
+  test::FillValues<float>(&min_output, {0});
+
+  Tensor max_output(DT_FLOAT, {1});
+  test::FillValues<float>(&max_output, {255.0f});
+
+  Tensor expected(DT_QUINT8, TensorShape({1, 1, 2, 1}));
+  test::FillValues<quint8>(&expected, {16, 0});
+
+  Verify<qint8, quint8>("MklQuantizedConv2DWithBiasAndReluAndRequantize",
+                        "_MklQuantizedConv2DWithBiasAndReluAndRequantize",
+                        image, filter, bias, min_input, max_input, min_filter,
+                        max_filter, min_output, max_output, expected, true, 0);
+}
+
+TEST_F(MklQuantizedConv2DTest, WithBiasAndLeakyReluAndRequantizeTest_U8in) {
+  Tensor image(DT_QUINT8,
+               {image_batch_count, image_height, image_width, depth});
+  test::FillValues<quint8>(&image, {1, 2, 0, 4, 5, 6, 0, 8, 9, 10, 0, 120});
+
+  Tensor filter(DT_QINT8, {kFilterSize, kFilterSize, depth, kFilterCount});
+  test::FillValues<qint8>(&filter, {1, 0, -1, 1, 0, -1, 1, 0, -1});
+
+  Tensor bias(DT_FLOAT, {kFilterCount});
+  test::FillValues<float>(&bias, {1});
+
+  Tensor min_input(DT_FLOAT, {1});
+  test::FillValues<float>(&min_input, {0});
+
+  Tensor max_input(DT_FLOAT, {1});
+  test::FillValues<float>(&max_input, {255.0f});
+
+  Tensor min_filter(DT_FLOAT, {1});
+  test::FillValues<float>(&min_filter, {-127.0f});
+
+  Tensor max_filter(DT_FLOAT, {1});
+  test::FillValues<float>(&max_filter, {127.0f});
+
+  Tensor min_output(DT_FLOAT, {1});
+  test::FillValues<float>(&min_output, {-127.0f});
+
+  Tensor max_output(DT_FLOAT, {1});
+  test::FillValues<float>(&max_output, {127.0f});
+
+  Tensor expected(DT_QINT8, TensorShape({1, 1, 2, 1}));
+  test::FillValues<qint8>(&expected, {16, -23});
+
+  Verify<quint8, qint8>("MklQuantizedConv2DWithBiasAndReluAndRequantize",
+                        "_MklQuantizedConv2DWithBiasAndReluAndRequantize",
+                        image, filter, bias, min_input, max_input, min_filter,
+                        max_filter, min_output, max_output, expected, true,
+                        0.2);
+}
+
+TEST_F(MklQuantizedConv2DTest, WithBiasAndLeakyReluAndRequantizeTest_S8in) {
+  Tensor image(DT_QINT8, {image_batch_count, image_height, image_width, depth});
+  test::FillValues<qint8>(&image, {1, 2, 0, 4, 5, 6, 0, 8, 9, 10, 0, 120});
+
+  Tensor filter(DT_QINT8, {kFilterSize, kFilterSize, depth, kFilterCount});
+  test::FillValues<qint8>(&filter, {1, 0, -1, 1, 0, -1, 1, 0, -1});
+
+  Tensor bias(DT_FLOAT, {kFilterCount});
+  test::FillValues<float>(&bias, {1});
+
+  Tensor min_input(DT_FLOAT, {1});
+  test::FillValues<float>(&min_input, {-127.0f});
+
+  Tensor max_input(DT_FLOAT, {1});
+  test::FillValues<float>(&max_input, {127.0f});
+
+  Tensor min_filter(DT_FLOAT, {1});
+  test::FillValues<float>(&min_filter, {-127.0f});
+
+  Tensor max_filter(DT_FLOAT, {1});
+  test::FillValues<float>(&max_filter, {127.0f});
+
+  Tensor min_output(DT_FLOAT, {1});
+  test::FillValues<float>(&min_output, {-127.0f});
+
+  Tensor max_output(DT_FLOAT, {1});
+  test::FillValues<float>(&max_output, {127.0f});
+
+  Tensor expected(DT_QINT8, TensorShape({1, 1, 2, 1}));
+  test::FillValues<qint8>(&expected, {16, -23});
+
+  Verify<qint8, qint8>("MklQuantizedConv2DWithBiasAndReluAndRequantize",
+                       "_MklQuantizedConv2DWithBiasAndReluAndRequantize", image,
+                       filter, bias, min_input, max_input, min_filter,
+                       max_filter, min_output, max_output, expected, true, 0.2);
+}
+
 // Testing fusion of pad and fusedconv2d
 template <typename T>
 class MklPadWithFusedConv2DOpTest : public OpsTestBase {

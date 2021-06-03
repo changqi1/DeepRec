@@ -2997,7 +2997,7 @@ REGISTER_OP("QuantizedConv2DAndReluAndRequantize")
       return Status::OK();
     });
 
-// Fusion of Quantized Conv2D, BiasAdd and Relu.
+// Fusion of Quantized Conv2D, BiasAdd and Relu/LeakyRelu.
 REGISTER_OP("QuantizedConv2DWithBiasAndRelu")
     .Input("input: Tinput")
     .Input("filter: Tfilter")
@@ -3016,6 +3016,7 @@ REGISTER_OP("QuantizedConv2DWithBiasAndRelu")
     .Attr(GetPaddingAttrStringWithExplicit())
     .Attr("dilations: list(int) = [1, 1, 1, 1]")
     .Attr("padding_list: list(int) = []")
+    .Attr("alpha: float = 0.0")
     .SetShapeFn([](InferenceContext* c) {
       TF_RETURN_IF_ERROR(shape_inference::QuantizedConv2DShape(c));
       ShapeHandle unused, channel;
@@ -3029,7 +3030,7 @@ REGISTER_OP("QuantizedConv2DWithBiasAndRelu")
       return Status::OK();
     });
 
-// Fusion of Quantized Conv2D, BiasAdd, Relu, and Requantize.
+// Fusion of Quantized Conv2D, BiasAdd, Relu/LeakyRelu, and Requantize.
 REGISTER_OP("QuantizedConv2DWithBiasAndReluAndRequantize")
     .Input("input: Tinput")
     .Input("filter: Tfilter")
@@ -3051,6 +3052,7 @@ REGISTER_OP("QuantizedConv2DWithBiasAndReluAndRequantize")
     .Attr(GetPaddingAttrStringWithExplicit())
     .Attr("dilations: list(int) = [1, 1, 1, 1]")
     .Attr("padding_list: list(int) = []")
+    .Attr("alpha: float = 0.0")
     .SetShapeFn([](InferenceContext* c) {
       TF_RETURN_IF_ERROR(shape_inference::QuantizedConv2DShape(c));
       ShapeHandle unused, channel;
