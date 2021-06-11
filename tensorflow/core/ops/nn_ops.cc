@@ -1200,6 +1200,27 @@ REGISTER_OP("SoftsignGrad")
     .Attr("T: {half, bfloat16, float, double}")
     .SetShapeFn(shape_inference::MergeBothInputsShapeFn);
 
+// Add Swish op to fuse sigmoid + mul.
+REGISTER_OP("_FusedSwish")
+    .Input("x: T")
+    .Output("y: T")
+    .Attr("T: {float, bfloat16}")
+    .SetShapeFn(shape_inference::UnchangedShape);
+
+
+REGISTER_OP("_MklSwish")
+    .Input("features: T")
+    .Input("mkl_features: uint8")
+    .Output("activations: T")
+    .Output("mkl_activations: uint8")
+    .Attr("T: {float, bfloat16} = DT_FLOAT")
+    .SetShapeFn(shape_inference::UnchangedShape)
+    .Doc(R"doc(
+MKL version of Swish operator. Uses MKL DNN APIs to implement Swish operator.
+NOTE Do not invoke this operator directly in Python. Graph rewrite pass is
+expected to invoke these operators.
+)doc");
+
 // --------------------------------------------------------------------------
 
 REGISTER_OP("Softmax")

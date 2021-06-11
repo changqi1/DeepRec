@@ -3278,6 +3278,23 @@ REGISTER_TEST_ALL_TYPES(NodeRewrite_TanhGrad_Positive);
 }
 REGISTER_TEST_ALL_TYPES(NodeRewrite_TanhTanhGrad_Positive);
 #undef REGISTER_TEST
+
+#define REGISTER_TEST(NAME, T, INPUT)                                        \
+  TEST_F(MklLayoutPassTest, NAME##_##T) {                                    \
+    DCHECK_EQ(kTensorOrdering, MklTfTensorOrdering::TENSORS_CONTIGUOUS);     \
+    InitGraph(                                                               \
+      "node { name: 'A' op: '" #INPUT "'}"                                   \
+      "node { name: 'B' op: '_FusedSwish'"                                   \
+      " attr { key: 'T'                value { type: " #T " } }"             \
+      " input: ['A'] }"                                                      \
+      "node { name: 'C' op: 'Zeta' attr { key: 'T' value { type: " #T " } }" \
+      " input: ['A', 'B'] }");                                               \
+  EXPECT_EQ(DoMklLayoutOptimizationPass(),                                   \
+            "A(" #INPUT ");B(_MklSwish);C(Zeta);DMT/_0(Const)|A->B;A->C;"    \
+            "A:control->DMT/_0:control;B->C:1;DMT/_0->B:1");                 \
+}
+REGISTER_TEST_ALL_TYPES(NodeRewrite_Swish_Positive);
+#undef REGISTER_TEST
 // clang-format on
 
 TEST_F(MklLayoutPassTest, NodeRewrite_AvgPool_Positive) {

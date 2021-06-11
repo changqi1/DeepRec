@@ -23,6 +23,7 @@ limitations under the License.
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/kernels/no_op.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/util/mkl_types.h"
 #include "tensorflow/core/util/mkl_util.h"
@@ -1319,6 +1320,39 @@ class MklGeluGradOp
   bool approximate_;
 };
 
+template <typename Device, typename T>
+class MklSwishOp
+    : public MklReluOpBase<Device, T, ALGORITHM::eltwise_swish> {
+ public:
+  ~MklSwishOp() {}
+
+  explicit MklSwishOp(OpKernelConstruction* context)
+      : MklReluOpBase<Device, T, ALGORITHM::eltwise_swish>(
+            context, 1.0f, 0.0f) {}
+
+  virtual void Compute_Scalar(OpKernelContext* context) {
+    const size_t src_index = 0;  // index of src input tensor
+    const size_t dst_index = 0;  // index of dst output tensor
+    const Tensor& src_tensor = MklGetInput(context, src_index);
+    MklDnnShape dnn_shape_src;
+    GetMklShape(context, src_index, &dnn_shape_src);
+
+    Tensor* dst_tensor = nullptr;
+    void* user_i =
+        static_cast<void*>(const_cast<T*>(src_tensor.flat<T>().data()));
+    MklDnnShape dnn_shape_dst;
+    dnn_shape_dst.SetMklTensor(false);
+    AllocateOutputSetMklShape(context, dst_index, &dst_tensor,
+                              src_tensor.shape(), dnn_shape_dst);
+    // swish(x) =  x * sigmoid(x).
+    void* out_o = static_cast<void*>(dst_tensor->flat<T>().data());
+    T feature = (static_cast<T*>(user_i))[0];
+    T e1 = Eigen::numext::exp(-feature);
+    (static_cast<T*>(out_o))[0] = feature / (static_cast<T>(1) + e1);
+    return;
+  }
+};
+
 // register dnn kernels for supported operations and supported types
 #define REGISTER_RELU_MKL_SUPPORTED_KERNELS_TYPES(type)        \
   REGISTER_KERNEL_BUILDER(                                     \
@@ -1416,6 +1450,26 @@ TF_CALL_bfloat16(REGISTER_LeakyRelu_MKL_SUPPORTED_KERNELS_TYPES);
       MklGeluGradOp<CPUDevice, type>);
 TF_CALL_float(REGISTER_GELU_MKL_SUPPORTED_KERNELS_TYPES);
 TF_CALL_bfloat16(REGISTER_GELU_MKL_SUPPORTED_KERNELS_TYPES);
+
+#define REGISTER_SWISH_MKL_SUPPORTED_KERNELS_TYPES(type)       \
+  REGISTER_KERNEL_BUILDER(                                     \
+      Name("_MklSwish")                                        \
+          .Device(DEVICE_CPU)                                  \
+          .TypeConstraint<type>("T")                           \
+          .Label(mkl_op_registry::kMklLayoutDependentOpLabel), \
+      MklSwishOp<CPUDevice, type>);
+TF_CALL_float(REGISTER_SWISH_MKL_SUPPORTED_KERNELS_TYPES);
+TF_CALL_bfloat16(REGISTER_SWISH_MKL_SUPPORTED_KERNELS_TYPES);
+
+// Regist Swish Kernel for Eigen CPU. Because TF registers it in Python API.
+#define REGISTER_SWISH_CPU(T) \
+  REGISTER_KERNEL_BUILDER(    \
+      Name("_FusedSwish").Device(DEVICE_CPU).TypeConstraint<T>("T"), NoOp);
+
+TF_CALL_float(REGISTER_SWISH_CPU);
+TF_CALL_bfloat16(REGISTER_SWISH_CPU);
+#undef REGISTER_CPU
+
 }  // namespace tensorflow
 
 #endif  // INTEL_MKL
