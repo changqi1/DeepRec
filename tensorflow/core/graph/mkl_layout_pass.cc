@@ -325,6 +325,10 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
     csinfo_.quantized_conv2d_with_bias_and_relu_and_requantize =
         "QuantizedConv2DWithBiasAndReluAndRequantize";
     csinfo_.quantized_max_pool = "QuantizedMaxPool";
+    csinfo_.quantized_conv2d_with_bias_relu_and_sum =
+        "QuantizedConv2DWithBiasReluAndSum";
+    csinfo_.quantized_conv2d_with_bias_relu_and_sum_and_requantize =
+        "QuantizedConv2DWithBiasReluAndSumAndRequantize";
     csinfo_.quantized_conv2d_with_bias_sum_and_relu =
         "QuantizedConv2DWithBiasSumAndRelu";
     csinfo_.quantized_conv2d_with_bias_sum_and_relu_and_requantize =
@@ -615,6 +619,17 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
                       mkl_op_registry::GetMklOpName(csinfo_.quantized_max_pool),
                       CopyAttrsAll, AlwaysRewrite,
                       kRewriteForLayoutPropagation});
+    rinfo_.push_back({csinfo_.quantized_conv2d_with_bias_relu_and_sum,
+                      mkl_op_registry::GetMklOpName(
+                          csinfo_.quantized_conv2d_with_bias_relu_and_sum),
+                      CopyAttrsQuantizedConv2D, AlwaysRewrite,
+                      kRewriteForLayoutPropagation});
+    rinfo_.push_back(
+        {csinfo_.quantized_conv2d_with_bias_relu_and_sum_and_requantize,
+         mkl_op_registry::GetMklOpName(
+             csinfo_.quantized_conv2d_with_bias_relu_and_sum_and_requantize),
+         CopyAttrsQuantizedConv2D, AlwaysRewrite,
+         kRewriteForLayoutPropagation});
     rinfo_.push_back({csinfo_.quantized_conv2d_with_bias_sum_and_relu,
                       mkl_op_registry::GetMklOpName(
                           csinfo_.quantized_conv2d_with_bias_sum_and_relu),
@@ -1001,6 +1016,8 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
     string quantized_conv2d_with_bias_and_relu_and_requantize;
     string quantized_concatv2;
     string quantized_max_pool;
+    string quantized_conv2d_with_bias_relu_and_sum;
+    string quantized_conv2d_with_bias_relu_and_sum_and_requantize;
     string quantized_conv2d_with_bias_sum_and_relu;
     string quantized_conv2d_with_bias_sum_and_relu_and_requantize;
     string quant_conv2d_with_bias_signed_sum_and_relu_and_requantize;
@@ -2365,12 +2382,14 @@ Status MklLayoutRewritePass::SetUpInputs(
       "QuantizedConv2DWithBias",
       "QuantizedConv2DAndRelu",
       "QuantizedConv2DWithBiasAndRelu",
+      "QuantizedConv2DWithBiasReluAndSum",
       "QuantizedConv2DWithBiasSumAndRelu",
       "QuantizedConv2DPerChannel",
       "QuantizedConv2DAndRequantize",
       "QuantizedConv2DWithBiasAndRequantize",
       "QuantizedConv2DAndReluAndRequantize",
       "QuantizedConv2DWithBiasAndReluAndRequantize",
+      "QuantizedConv2DWithBiasReluAndSumAndRequantize",
       "QuantizedConv2DWithBiasSumAndReluAndRequantize",
       "QuantizedConv2DWithBiasSignedSumAndReluAndRequantize",
       "QuantizedMatMulWithBias",
