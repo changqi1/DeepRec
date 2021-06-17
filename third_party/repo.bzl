@@ -89,10 +89,15 @@ def _tf_http_archive(ctx):
              "put the correctly formatted mirror URL there anyway, because " +
              "someone will come along shortly thereafter and mirror the file.")
 
+    urls = []
+    for url in ctx.attr.urls:
+        if "PWD" in url:
+            url = url.replace("PWD", _get_env_var(ctx, "PWD"))
+        urls.append(url)
     use_syslib = _use_system_lib(ctx, ctx.attr.name)
     if not use_syslib:
         ctx.download_and_extract(
-            ctx.attr.urls,
+            urls,
             "",
             ctx.attr.sha256,
             ctx.attr.type,

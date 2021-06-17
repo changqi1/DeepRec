@@ -227,13 +227,11 @@ inline bool array_cmp(const T* a1, const T* a2, size_t size) {
 inline mkldnn::stream* CreateStream(OpKernelContext* ctx,
                                     const engine& engine) {
 #ifdef ENABLE_MKLDNN_THREADPOOL
-  stream_attr tp_stream_attr(engine::kind::cpu);
   if (ctx != nullptr) {
     auto eigen_tp =
         MklDnnThreadPoolWrapper::GetInstance().CreateThreadPoolPtr(ctx);
-    tp_stream_attr.set_threadpool(eigen_tp);
     stream* tp_stream =
-        new stream(engine, stream::flags::default_flags, tp_stream_attr);
+        new stream(dnnl::threadpool_interop::make_stream(engine, eigen_tp));
     return tp_stream;
   } else {
     stream* tp_stream = new stream(engine);

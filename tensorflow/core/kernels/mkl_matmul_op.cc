@@ -163,8 +163,8 @@ class MklMatMulOp : public OpKernel {
     auto eigen_tp =
         MklDnnThreadPoolWrapper::GetInstance().CreateThreadPoolPtr(ctx);
 
-    dnnl_sgemm_tp(char_transa, char_transb, m, n, k, alpha, a, lda, b, ldb,
-                  beta, c, ldc, eigen_tp);
+    sgemm(char_transa, char_transb, m, n, k, alpha, a, lda, b, ldb, beta, c,
+          ldc, eigen_tp);
 #else
     dnnl_sgemm(char_transa, char_transb, m, n, k, alpha, a, lda, b, ldb, beta,
                c, ldc);

@@ -153,7 +153,6 @@ load("@io_bazel_rules_closure//closure:defs.bzl", "closure_proto_library")
 load(
     "//third_party/mkl:build_defs.bzl",
     "if_mkl",
-    "mkl_deps",
 )
 # Placeholder for Google-internal load statements.
 
@@ -2937,7 +2936,7 @@ tf_cuda_library(
     ] + if_static(
         extra_deps = ["@com_google_protobuf//:protobuf"],
         otherwise = ["@com_google_protobuf//:protobuf_headers"],
-    ) + mkl_deps(),
+    ),
     alwayslink = 1,
 )
 
@@ -3280,7 +3279,7 @@ tf_cuda_library(
         "//tensorflow/core/grappler/utils:functions",
         "//tensorflow/core/profiler/lib:traceme",
         "//tensorflow/core/profiler/internal:traceme_recorder",
-    ] + mkl_deps(),
+    ],
     alwayslink = 1,
 )
 
@@ -3326,7 +3325,7 @@ tf_cuda_library(
         "//tensorflow/core/grappler/clusters:virtual_cluster",
         "//tensorflow/core/grappler/optimizers:meta_optimizer",
         "//third_party/eigen3",
-    ] + mkl_deps() + tf_additional_core_deps() + if_static([
+    ] + tf_additional_core_deps() + if_static([
         ":core_cpu_impl",
         ":function_ops_op_lib",
         ":functional_grad",
@@ -4543,7 +4542,7 @@ tf_cuda_only_cc_test(
         ":test",
         ":test_main",
         "//third_party/eigen3",
-    ] + mkl_deps(),
+    ],
 )
 
 tf_cc_test_gpu(
