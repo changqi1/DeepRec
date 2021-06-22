@@ -1791,6 +1791,7 @@ class MklQuantizedConv2DReluOp
   explicit MklQuantizedConv2DReluOp(OpKernelConstruction* context)
       : MklQuantizedConv2DOp<Device, Tinput, Tbias, Toutput, Ttemp_output,
                              bias_enabled, is_depthwise>(context) {
+    alpha = -1.0;
     if (context->HasAttr("alpha")) {
       OP_REQUIRES_OK(context, context->GetAttr("alpha", &alpha));
     }
@@ -1995,6 +1996,7 @@ class MklQuantizedConv2DReluSumOp
   explicit MklQuantizedConv2DReluSumOp(OpKernelConstruction* context)
       : MklQuantizedConv2DOp<Device, Tinput, Tbias, Toutput, Ttemp_output,
                              bias_enabled, is_depthwise>(context) {
+    alpha = -1.0;
     if (context->HasAttr("alpha")) {
       OP_REQUIRES_OK(context, context->GetAttr("alpha", &alpha));
     }
