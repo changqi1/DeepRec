@@ -781,8 +781,12 @@ Status Conv2DShapeImpl(shape_inference::InferenceContext* c,
     if (!s.ok() && !errors::IsNotFound(s)) {
       return s;
     }
-    TF_RETURN_IF_ERROR(CheckValidPadding(padding, explicit_paddings,
-                                         /*num_dims=*/4, data_format));
+    // Due to historical reasons, some QuantizedConv2D-like ops are allowed to
+    // have non-empty padding_list attribute if the padding attribute is Valid
+    if (!(padding == Padding::VALID && padding_attr_name == "padding_list")) {
+      TF_RETURN_IF_ERROR(CheckValidPadding(padding, explicit_paddings,
+                                           /*num_dims=*/4, data_format));
+    }
   } else {
     CHECK(padding != Padding::EXPLICIT);  // Crash ok.
   }
