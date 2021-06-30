@@ -21,7 +21,6 @@ load(
     "def_file_filter_configure",
 )
 load("//third_party/FP16:workspace.bzl", FP16 = "repo")
-load("//third_party/aws:workspace.bzl", aws = "repo")
 load("//third_party/flatbuffers:workspace.bzl", flatbuffers = "repo")
 load("//third_party/highwayhash:workspace.bzl", highwayhash = "repo")
 load("//third_party/hwloc:workspace.bzl", hwloc = "repo")
@@ -36,7 +35,6 @@ load("//third_party/pasta:workspace.bzl", pasta = "repo")
 def initialize_third_party():
     """ Load third party repositories.  See above load() statements. """
     FP16()
-    aws()
     flatbuffers()
     highwayhash()
     hwloc()
@@ -505,8 +503,8 @@ def tf_repositories(path_prefix = "", tf_repo_name = ""):
         strip_prefix = "curl-7.77.0",
         system_build_file = clean_dep("//third_party/systemlibs:curl.BUILD"),
         urls = [
-            "https://storage.googleapis.com/mirror.tensorflow.org/curl.haxx.se/download/curl-7.77.0.tar.gz",
-            "https://curl.haxx.se/download/curl-7.77.0.tar.gz",
+            "https://storage.googleapis.com/mirror.tensorflow.org/curl.se/download/curl-7.77.0.tar.gz",
+            "https://curl.se/download/curl-7.77.0.tar.gz",
         ],
     )
 

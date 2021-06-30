@@ -39,6 +39,8 @@ test --define open_source_build=true
 # environment variable "TF_MKL_ROOT" every time before build.
 build:mkl --define=build_with_mkl=true --define=enable_mkl=true
 build:mkl --define=tensorflow_mkldnn_contraction_kernel=0
+# Fix CVE-2019-11835
+build:mkl --define=no_aws_support=true
 build:mkl -c opt
 
 # config to build OneDNN backend with a user specified threadpool.
@@ -46,12 +48,16 @@ build:mkl_threadpool --define=build_with_mkl=true --define=enable_mkl=true
 build:mkl_threadpool --define=tensorflow_mkldnn_contraction_kernel=0
 build:mkl_threadpool --define=build_with_mkl_opensource=true
 build:mkl_threadpool --define=build_with_mkldnn_threadpool=true
+# Fix CVE-2019-11835
+build:mkl_threadpool --define=no_aws_support=true
 build:mkl_threadpool -c opt
 
 # Config setting to build with oneDNN and without the binary blob
 build:mkl_opensource_only --define=build_with_mkl=true --define=enable_mkl=true
 build:mkl_opensource_only --define=tensorflow_mkldnn_contraction_kernel=0
 build:mkl_opensource_only --define=build_with_mkl_opensource=true
+# Fix CVE-2019-11835
+build:mkl_opensource_only --define=no_aws_support=true
 build:mkl_opensource_only -c opt
 
 # This config option is used to enable MKL-DNN open source library only,
