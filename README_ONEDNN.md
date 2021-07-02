@@ -51,14 +51,17 @@ pip install --upgrade --user ~/path_to_save_wheel/<wheel_name>.whl
 This maintenance release only provide the wheel binaries for download and installation in Linux.
 
 Run the below instruction to install the wheel into an existing Python* installation. Python 
-versions supported are 3.6, and 3.7. The commands to install the current release for different
+versions supported are 3.5, 3.6, and 3.7. The commands to install the current release for different
 Python versions are as below:
 
 ```
-$ pip install https://storage.googleapis.com/intel-optimized-tensorflow/intel_tensorflow-1.15.0up3-cp36-cp36m-manylinux2010_x86_64.whl
+$ pip install https://storage.googleapis.com/intel-optimized-tensorflow/intel_tensorflow-1.15.0up3-cp35-cp35m-manylinux2010_x86_64.whl
 ```
 ```
-$ pip install https://storage.googleapis.com/intel-optimized-tensorflow/intel_tensorflow-1.15.0up3-cp37-cp37m-manylinux2010_x86_64.whl
+$ pip install https://storage.googleapis.com/intel-optimized-tensorflow/intel_tensorflow-1.15.0up3-cp36-cp36m-manylinux_2_12_x86_64.manylinux2010_x86_64.whl
+```
+```
+$ pip install https://storage.googleapis.com/intel-optimized-tensorflow/intel_tensorflow-1.15.0up3-cp37-cp37m-manylinux_2_12_x86_64.manylinux2010_x86_64.whl
 ```
 
 Learn more about the [TensorFlow community](https://www.tensorflow.org/community) and how to [contribute](https://www.tensorflow.org/community/contribute).
