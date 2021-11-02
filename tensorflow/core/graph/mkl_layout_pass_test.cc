@@ -2106,6 +2106,30 @@ REGISTER_TEST_ALL_TYPES(NodeRewrite_FusedBatchMatMul_Positive)
 REGISTER_TEST_ALL_TYPES(NodeRewrite_FusedBatchMatMulV2_Positive)
 #undef REGISTER_TEST
 
+// Test set: _FusedMatMulGrad -> MklFusedMatMulGrad rewrite tests
+#define REGISTER_TEST(NAME, T, INPUT)                                          \
+  TEST_F(MklLayoutPassTest, NAME##_##T) {                                      \
+  InitGraph(                                                                   \
+      "node { name: 'A' op: '" #INPUT "'}"                                     \
+      "node { name: 'B' op: '" #INPUT "'}"                                     \
+      "node { name: 'D' op: '_FusedMatMulGrad'"                                \
+      " attr { key: 'T'                value { type:" #T  "} }"                \
+      " attr { key: 'transpose_a'      value { b: false } }"                   \
+      " attr { key: 'transpose_b'      value { b: false } }"                   \
+      " attr { key: 'fused_ops'        value { list: {s: 'BiasAddGrad'} } }"   \
+      " input: ['A', 'B']}"                                                    \
+      "node { name: 'Z' op: 'Zeta'"                                            \
+      " attr {key: 'T'                 value { type: " #T " } }"               \
+      " input: ['D']}");                                                       \
+  EXPECT_EQ(DoMklLayoutOptimizationPass(),                                     \
+            "A(" #INPUT ");B(" #INPUT ");D(_MklFusedMatMulGrad);"              \
+            "DMT/_0(Const);DMT/_1(Const);Z(Zeta)"                              \
+            "|A->D;A:control->DMT/_0:control;A:control->DMT/_1:control;"       \
+            "B->D:1;D->Z;DMT/_0->D:2;DMT/_1->D:3");                            \
+}
+REGISTER_TEST_ALL_TYPES(NodeRewrite_FusedMatMulGrad_Positive);
+#undef REGISTER_TEST
+
 // Merge test for PadWithFusedConv2D Op with BiasAdd fusion
 // padding is VALID type
 // A = input(image), B = input(paddings), C = Pad(A, B) = input of conv2D,
