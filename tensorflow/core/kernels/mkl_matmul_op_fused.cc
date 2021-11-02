@@ -22,6 +22,7 @@ limitations under the License.
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/kernels/fill_functor.h"
 #include "tensorflow/core/kernels/mkl_matmul_ops_common.h"
+#include "tensorflow/core/kernels/no_op.h"
 #include "tensorflow/core/lib/core/errors.h"
 
 namespace tensorflow {
@@ -305,6 +306,197 @@ class MklFusedMatMulOp : public MklDnnMatMulOpBase<T, T> {
       MklFusedMatMulOp<CPUDevice, type>);
 TF_CALL_float(REGISTER_FUSEDMATMUL_MKL_SUPPORTED_KERNELS_TYPES);
 TF_CALL_bfloat16(REGISTER_FUSEDMATMUL_MKL_SUPPORTED_KERNELS_TYPES);
+
+#ifdef ENABLE_MKLDNN_V1
+template <typename Device, typename T>
+class MklFusedMatMulGradOp : public OpKernel {
+ public:
+  explicit MklFusedMatMulGradOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("fused_ops", &fused_ops_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("transpose_a", &transpose_a_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("transpose_b", &transpose_b_));
+
+    OP_REQUIRES(ctx, fused_ops_.size() == 1,
+                errors::InvalidArgument(
+                    "MklFusedMatMul must have 1 post-arguments at most."));
+    OP_REQUIRES(
+        ctx, fused_ops_[0] == "BiasAddGrad",
+        errors::InvalidArgument(
+            "The 1st post-argument of MklFusedMatMul must be BiasAddGrad."));
+  }
+  void Compute(OpKernelContext* ctx) {
+    try {
+      const size_t diff_dst_index = 1;  // index of diff_dst input tensor
+      const size_t src_index = 0;       // index of src input tensor
+
+      const Tensor& src_tensor = MklGetInput(ctx, src_index);
+      const Tensor& diff_dst_tensor = MklGetInput(ctx, diff_dst_index);
+
+      MklDnnShape src_mkl_shape;
+      MklDnnShape diff_dst_mkl_shape;
+      GetMklShape(ctx, src_index, &src_mkl_shape);
+      GetMklShape(ctx, diff_dst_index, &diff_dst_mkl_shape);
+      auto src_tf_shape = src_mkl_shape.IsMklTensor()
+                              ? src_mkl_shape.GetTfShape()
+                              : src_tensor.shape();
+      auto diff_dst_tf_shape = diff_dst_mkl_shape.IsMklTensor()
+                                   ? diff_dst_mkl_shape.GetTfShape()
+                                   : diff_dst_tensor.shape();
+
+      const int dim_pair[] = {transpose_a_ ? 0 : 1, transpose_a_ ? 1 : 0};
+      const int batch = src_tf_shape.dim_size(1 - dim_pair[0]);
+      const int k = src_tf_shape.dim_size(dim_pair[0]);
+      const int channel = diff_dst_tf_shape.dim_size(1);
+
+      OP_REQUIRES(
+          ctx, batch == diff_dst_tf_shape.dim_size(0),
+          errors::InvalidArgument(
+              "Matrix size-incompatible: In[0]: ", src_tf_shape.DebugString(),
+              ", In[1]: ", diff_dst_tf_shape.DebugString()));
+
+      if (batch == 0 || channel == 0) {
+        return;
+      }
+
+      memory::dims src_dims = memory::dims({batch, k});
+      memory::dims diff_dst_dims = memory::dims({batch, channel});
+      memory::dims diff_weight_dims = memory::dims({channel, k});
+      memory::dims diff_bias_dims = memory::dims({channel});
+      MEMORY_FORMAT src_format =
+          transpose_a_ ? MEMORY_FORMAT::cn : MEMORY_FORMAT::nc;
+
+      MEMORY_FORMAT diff_dst_format = MEMORY_FORMAT::nc;
+
+      MEMORY_FORMAT diff_weight_format =
+          transpose_b_ ? MEMORY_FORMAT::oi : MEMORY_FORMAT::io;
+
+      MklDnnMatMulBwdFilterParams matmul_params(
+          src_dims, diff_weight_dims, diff_bias_dims, diff_dst_dims,
+          MEMORY_FORMAT::nc, diff_weight_format, MEMORY_FORMAT::nc);
+
+      MklDnnMatMulBwdFilterPrimitive<T>* matmul_prim =
+          MklDnnMatMulBwdFilterPrimitiveFactory<T>::Get(matmul_params);
+
+      Tensor* diff_weight_tensor = nullptr;
+      Tensor* bias_tensor = nullptr;
+      std::shared_ptr<mkldnn::inner_product_backward_weights::primitive_desc>
+          matmul_pd = matmul_prim->GetPrimitiveDesc();
+
+      // Has two outputs, 0 for MatMulGradFilter, 1 for BiasAddGrad
+      if (src_mkl_shape.IsMklTensor()) {
+        memory::desc diff_weight_pd = matmul_pd->diff_weights_desc();
+        AllocateOutputTensor(ctx, diff_weight_pd, diff_weight_dims,
+                             MKL_TENSOR_FORMAT_NC, &diff_weight_tensor, 0);
+        memory::desc bias_pd = matmul_pd->diff_bias_desc();
+        AllocateOutputTensor(ctx, bias_pd, diff_bias_dims, MKL_TENSOR_FORMAT_X,
+                             &bias_tensor, 1);
+      } else {
+        TensorShape diff_weight_tensor_shape({k, channel});
+        if (transpose_b_) diff_weight_tensor_shape = {channel, k};
+        MklDnnShape diff_weight_mkl_shape;
+        diff_weight_mkl_shape.SetMklTensor(false);
+        diff_weight_mkl_shape.SetElemType(MklDnnType<T>());
+        AllocateOutputSetMklShape(ctx, 0, &diff_weight_tensor,
+                                  diff_weight_tensor_shape,
+                                  diff_weight_mkl_shape);
+
+        TensorShape bias_tensor_shape({channel});
+        MklDnnShape bias_mkl_shape;
+        bias_mkl_shape.SetMklTensor(false);
+        bias_mkl_shape.SetElemType(MklDnnType<T>());
+        AllocateOutputSetMklShape(ctx, 1, &bias_tensor, bias_tensor_shape,
+                                  bias_mkl_shape);
+      }
+
+      T* src_data = const_cast<T*>(src_tensor.flat<T>().data());
+      T* diff_dst_data = const_cast<T*>(diff_dst_tensor.flat<T>().data());
+      T* bias_data = const_cast<T*>(bias_tensor->flat<T>().data());
+      T* diff_weight_data =
+          const_cast<T*>(diff_weight_tensor->flat<T>().data());
+
+      MklDnnData<T> src_mkl(&cpu_engine_);
+      MklDnnData<T> diff_dst_mkl(&cpu_engine_);
+      MklDnnData<T> diff_weight_mkl(&cpu_engine_);
+
+      auto src_md = src_mkl_shape.IsMklTensor()
+                        ? src_mkl_shape.GetMklLayout()
+                        : memory::desc(src_dims, MklDnnType<T>(), src_format);
+
+      auto diff_dst_md =
+          diff_dst_mkl_shape.IsMklTensor()
+              ? diff_dst_mkl_shape.GetMklLayout()
+              : memory::desc(diff_dst_dims, MklDnnType<T>(), diff_dst_format);
+
+      auto diff_weight_md =
+          memory::desc(diff_weight_dims, MklDnnType<T>(), diff_weight_format);
+
+      if (IS_SRC_REORDER_NEEDED(src_md, matmul_pd, matmul_prim)) {
+        src_mkl.SetUsrMem(src_md, src_data);
+        src_mkl.CheckReorderToOpMem(MEMORY_PD_WITHOUT_DATA(
+            matmul_pd.get()->PRIMITIVE_DESC_SRC, cpu_engine_));
+        src_data = reinterpret_cast<T*>(src_mkl.GetOpMem().get_data_handle());
+      }
+
+      if (diff_dst_md != matmul_pd->diff_dst_desc()) {
+        diff_dst_mkl.SetUsrMem(diff_dst_md, diff_dst_data);
+        diff_dst_mkl.CheckReorderToOpMem(
+            MEMORY_PD_WITHOUT_DATA(matmul_pd->diff_dst_desc(), cpu_engine_));
+        diff_dst_data =
+            reinterpret_cast<T*>(diff_dst_mkl.GetOpMem().get_data_handle());
+      }
+      // Execute fused matmul op.
+      matmul_prim->Execute(src_data, diff_weight_data, bias_data,
+                           diff_dst_data);
+    } catch (mkldnn::error& e) {
+      string error_msg = "Status: " + std::to_string(e.status) +
+                         ", message: " + string(e.message) + ", in file " +
+                         string(__FILE__) + ":" + std::to_string(__LINE__);
+      OP_REQUIRES_OK(
+          ctx, errors::Aborted("Operation received an exception:", error_msg));
+    }
+  }
+
+ private:
+  void AllocateOutputTensor(OpKernelContext* context, memory::desc& dst_pd,
+                            const memory::dims& output_dims_mkl_order,
+                            MKL_TENSOR_FORMAT output_tf_format,
+                            Tensor** output_tensor, int idx) {
+    DCHECK(output_tensor);
+
+    MklDnnShape output_mkl_shape;
+    output_mkl_shape.SetMklTensor(true);
+    output_mkl_shape.SetMklLayout(&dst_pd);
+    output_mkl_shape.SetElemType(MklDnnType<T>());
+    output_mkl_shape.SetTfLayout(output_dims_mkl_order.size(),
+                                 output_dims_mkl_order, output_tf_format);
+
+    TensorShape output_tf_shape;
+    output_tf_shape.AddDim((dst_pd.get_size() / sizeof(T)));
+
+    // Allocate Output Tensor
+    AllocateOutputSetMklShape(context, idx, output_tensor, output_tf_shape,
+                              output_mkl_shape);
+  }
+  bool transpose_a_;
+  bool transpose_b_;
+  std::vector<string> fused_ops_;
+  engine cpu_engine_ = engine(ENGINE_CPU, 0);
+};
+
+#define REGISTER_FUSEDMATMUL_GRAD_TYPES(type)                                \
+  REGISTER_KERNEL_BUILDER(                                                   \
+      Name("_MklFusedMatMulGrad")                                            \
+          .Device(DEVICE_CPU)                                                \
+          .TypeConstraint<type>("T")                                         \
+          .Label(mkl_op_registry::kMklLayoutDependentOpLabel),               \
+      MklFusedMatMulGradOp<CPUDevice, type>);                                \
+  REGISTER_KERNEL_BUILDER(                                                   \
+      Name("_FusedMatMulGrad").Device(DEVICE_CPU).TypeConstraint<type>("T"), \
+      NoOp);
+
+TF_CALL_float(REGISTER_FUSEDMATMUL_GRAD_TYPES);
+TF_CALL_bfloat16(REGISTER_FUSEDMATMUL_GRAD_TYPES);
+#endif  // ENABLE_MKLDNN_V1
 
 }  // namespace tensorflow
 

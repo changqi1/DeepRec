@@ -68,7 +68,6 @@ constexpr char kFusedConv2D[] = "_FusedConv2D";
 constexpr char kFusedMatMul[] = "_FusedMatMul";
 constexpr char kFusedMatMulGrad[] = "_FusedMatMulGrad";
 constexpr char kFusedBatchMatMul[] = "_FusedBatchMatMulV2";
-
 constexpr char kFusedDepthwiseConv2dNative[] = "_FusedDepthwiseConv2dNative";
 constexpr char kFusedBatchNormEx[] = "_FusedBatchNormEx";
 
@@ -120,6 +119,17 @@ struct ContractionWithBiasAdd {
 
   int contraction = kMissingIndex;
   int bias_add = kMissingIndex;
+};
+
+// Contraction node followed by a BiasAddGrad.
+struct ContractionWithBiasAddGrad {
+  ContractionWithBiasAddGrad() = default;
+  ContractionWithBiasAddGrad(int contraction, int bias_add_grad)
+      : contraction(contraction), bias_add_grad(bias_add_grad) {}
+
+  int contraction = kMissingIndex;
+  int bias_add_grad = kMissingIndex;
+  std::vector<int> bias_add_grad_outs;
 };
 
 // Contraction node followed by a BiasAdd and Activation.
@@ -375,6 +385,12 @@ bool IsGpuCompatible(const RemapperContext& ctx,
                      const ContractionWithSqueezeAndBiasAdd& matched) {
   return false;
 }
+#ifdef INTEL_MKL
+bool IsGpuCompatible(const RemapperContext& ctx,
+                     const ContractionWithBiasAddGrad& matched) {
+  return false;
+}
+#endif
 
 // Returns true if the given pattern is supported on the assigned device.
 template <typename Pattern>
@@ -786,6 +802,114 @@ bool FindContractionWithBiasAddAndAdd(const RemapperContext& ctx,
   matched->bias_add = base.bias_add;
   matched->add = node_view.node_index();
 
+  return true;
+}
+
+bool SharedInputWithMatMul(const RemapperContext& ctx, int node_index,
+                           int node_dz) {
+  const auto* node_view = ctx.graph_view.GetNode(node_index);
+  if (node_view == nullptr) return false;
+  const auto* shared_input = node_view->GetRegularFanin(0).node_view();
+  if (shared_input == nullptr) return false;
+  if (shared_input->node_index() == node_dz) {
+    shared_input = node_view->GetRegularFanin(1).node_view();
+  }
+
+  for (const auto x_fanout_i : shared_input->GetRegularFanouts()) {
+    for (const auto x_fanout : x_fanout_i) {
+      const auto* x_node_view = x_fanout.node_view();
+      if (x_node_view->node_index() == node_index) continue;
+
+      if (!IsMatMul(*(x_node_view->node())) &&
+          x_node_view->GetOp() != kFusedMatMul)
+        continue;
+
+      if (shared_input == nullptr) return false;
+      if (shared_input->node_index() ==
+          x_node_view->GetRegularFanin(0).node_view()->node_index()) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool FindContractionWithBiasAddGrad(const RemapperContext& ctx, int node_index,
+                                    ContractionWithBiasAddGrad* matched) {
+  const auto* node_view = ctx.graph_view.GetNode(node_index);
+  if (node_view == nullptr) return false;
+  // TODO(lyandy): Forward controls for patterns with control dependencies.
+  if (HasControlFaninOrFanout(*node_view)) return false;
+
+  // Need use BiasAddGrad to find the MatMulGradFilter
+  const auto* node_def = node_view->node();
+  if (!IsBiasAddGrad(*node_def)) return false;
+
+#ifdef ENABLE_INTEL_MKL_BFLOAT16
+  if (!(HasDataType(node_def, DT_FLOAT) || HasDataType(node_def, DT_BFLOAT16)))
+    return false;
+#else
+  if (!HasDataType(node_def, DT_FLOAT)) return false;
+#endif
+
+  // BiasAddGrad, MatMulGradFilter and MatMulGradInput use the same input.
+  //
+  // OP                  | Input
+  // ---------------------------------------------------------------------
+  // BiasAddGrad         | dz
+  // MatMul(grad filter) | x and dz
+  // MatMul(grad input)  | y and dz
+  //
+  // MatMul(forward)     | 0: x, 1; y
+  //
+  // Need fuse the BiasAddGrad and MatMulGradFilter, so will find the MatMul
+  // has input x. The input x mean the first input of the forward MatMul.
+  // MatMul backward share one input(x, y) with the forward matmul, using
+  // this shared input(input_x in the code below) to check if this input is
+  // the forward input with index 0.
+
+  const auto* dz = node_view->GetRegularFanin(0).node_view();
+  if (dz == nullptr) return false;
+  // The node index for MatMulGradFilter if found.
+  int matmul_grad_filter_idx = -1;
+
+  // Limit this patter that dz only has 3 output, BiasAddGrad, MatMulGradFilter
+  // and MatMulGradInput.
+  if (dz->NumRegularFanouts() != 3) return false;
+
+  std::vector<int> matmuls;
+  for (const auto dz_fanout_i : dz->GetRegularFanouts()) {
+    for (const auto dz_fanout : dz_fanout_i) {
+      if (IsMatMul(*(dz_fanout.node_view()->node()))) {
+        matmuls.push_back(dz_fanout.node_view()->node_index());
+      }
+    }
+  }
+
+  if (matmuls.size() != 2) return false;
+
+  // Check which matmul has shared input(index 0) with the forward matmul.
+  if (SharedInputWithMatMul(ctx, matmuls.at(0), dz->node_index())) {
+    matmul_grad_filter_idx = matmuls.at(0);
+  }
+
+  if (SharedInputWithMatMul(ctx, matmuls.at(1), dz->node_index())) {
+    if (matmul_grad_filter_idx > 0) return false;
+    matmul_grad_filter_idx = matmuls.at(1);
+  }
+
+  if (matmul_grad_filter_idx < 0) return false;
+
+  // We successfully found a BiasAddGrad and MatMulGradFilter pattern.
+  matched->contraction = matmul_grad_filter_idx;
+  matched->bias_add_grad = node_view->node_index();
+
+  for (auto const bias_out : node_view->GetRegularFanouts()) {
+    for (auto const bias_out_i : bias_out) {
+      matched->bias_add_grad_outs.push_back(
+          bias_out_i.node_view()->node_index());
+    }
+  }
   return true;
 }
 
@@ -1203,6 +1327,15 @@ void CopyBatchMatMulAttributes(const NodeDef& batchmatmul,
   (*attr)["T"] = src_attr.at("T");
   (*attr)["adj_x"] = src_attr.at("adj_x");
   (*attr)["adj_y"] = src_attr.at("adj_y");
+}
+
+void CopyAttributesAll(const NodeDef& from, NodeDef* to) {
+  auto* attr = to->mutable_attr();
+  auto& src_attr = from.attr();
+  for (auto iter = src_attr.begin(); iter != src_attr.end(); ++iter) {
+    auto name = iter->first;
+    (*attr)[name] = src_attr.at(name);
+  }
 }
 
 void SetFusedOpAttributes(NodeDef* fused,
@@ -1720,6 +1853,84 @@ Status AddFusedContractionNode(
   return Status::OK();
 }
 
+void SetGradFusedOpAttributes(
+    NodeDef* fused, const absl::Span<const absl::string_view> fused_ops) {
+  auto* attr = fused->mutable_attr();
+  SetAttrValue(fused_ops, &(*attr)["fused_ops"]);
+}
+
+Status AddFusedContractionGradNode(RemapperContext* ctx,
+                                   const ContractionWithBiasAddGrad& matched,
+                                   std::vector<bool>* invalidated_nodes,
+                                   std::vector<bool>* nodes_to_delete) {
+  DCHECK(IsDeviceCompatible(*ctx, matched)) << "Unsupported fusion pattern";
+
+  const GraphDef* graph = ctx->graph_view.graph();
+  const NodeDef& contraction = graph->node(matched.contraction);
+  const NodeDef& bias_add_grad = graph->node(matched.bias_add_grad);
+  DCHECK(IsMatMul(contraction)) << "Input node must be a MatMul";
+
+  VLOG(2) << "Fuse " << contraction.op() << " with BiasAddGrad: "
+          << " bias_add_grad=" << bias_add_grad.name()
+          << " contraction=" << contraction.name();
+
+  NodeDef fused_op;
+  fused_op.set_name(contraction.name());
+  fused_op.set_device(contraction.device());
+  fused_op.set_op(kFusedMatMulGrad);
+  auto* fused_op_attr = fused_op.mutable_attr();
+  auto& contraction_attr = contraction.attr();
+
+  if (contraction.input(0) == bias_add_grad.input(0)) {
+    fused_op.add_input(contraction.input(1));  // 0: input
+    (*fused_op_attr)["transpose_a"] = contraction_attr.at("transpose_b");
+    (*fused_op_attr)["transpose_b"] = contraction_attr.at("transpose_a");
+  } else {
+    fused_op.add_input(contraction.input(0));  // 0: input
+    const tensorflow::AttrValue ta_attr = contraction_attr.at("transpose_a");
+    SetAttrValue(!ta_attr.b(), &(*fused_op_attr)["transpose_a"]);
+    (*fused_op_attr)["transpose_b"] = contraction_attr.at("transpose_b");
+  }
+  fused_op.add_input(bias_add_grad.input(0));  // 1: dz
+  (*fused_op_attr)["T"] = contraction_attr.at("T");
+
+  std::vector<NodeDef> bias_add_grad_outs;
+  bias_add_grad_outs.resize(matched.bias_add_grad_outs.size());
+  for (int i = 0; i < matched.bias_add_grad_outs.size(); ++i) {
+    const NodeDef& out_i = graph->node(matched.bias_add_grad_outs[i]);
+    bias_add_grad_outs[i].set_name(out_i.name());
+    bias_add_grad_outs[i].set_device(out_i.device());
+    bias_add_grad_outs[i].set_op(out_i.op());
+    for (int j = 0; j < out_i.input_size(); ++j) {
+      auto out_i_input = out_i.input(j);
+      if (out_i_input == bias_add_grad.name()) {
+        out_i_input = contraction.name() + ":1";
+      }
+      bias_add_grad_outs[i].add_input(out_i_input);
+    }
+    CopyAttributesAll(out_i, &bias_add_grad_outs[i]);
+  }
+
+  SetGradFusedOpAttributes(&fused_op, {"BiasAddGrad"});
+
+  utils::Mutation* mutation = ctx->graph_view.GetMutationBuilder();
+  Status status;
+  mutation->AddNode(std::move(fused_op), &status);
+  for (int i = 0; i < matched.bias_add_grad_outs.size(); ++i) {
+    mutation->AddNode(std::move(bias_add_grad_outs[i]), &status);
+  }
+  TF_RETURN_IF_ERROR(status);
+  TF_RETURN_IF_ERROR(mutation->Apply());
+
+  (*invalidated_nodes)[matched.contraction] = true;
+  (*nodes_to_delete)[matched.bias_add_grad] = true;
+  for (int i = 0; i < matched.bias_add_grad_outs.size(); ++i) {
+    (*invalidated_nodes)[matched.bias_add_grad_outs[i]] = true;
+  }
+
+  return Status::OK();
+}
+
 Status AddFusedContractionNode(RemapperContext* ctx,
                                const ContractionWithSwish& matched,
                                std::vector<bool>* invalidated_nodes,
@@ -2011,6 +2222,8 @@ bool IsConv2DOrMatMul(const NodeDef& node) {
 bool IsContractionWithAdd(const RemapperContext& ctx, int node_index) {
   const auto* node_view = ctx.graph_view.GetNode(node_index);
 
+  if (node_view == nullptr) return false;
+
   // Candidate for Conv2D + Add or Conv2D + BiasAdd + Add fusion.
   //               MatMul + Add or MatMul + BiasAdd + Add fusion.
   auto is_supported_add_input =
@@ -2196,6 +2409,7 @@ Status Remapper::Optimize(Cluster* cluster, const GrapplerItem& item,
       ContractionWithBiasAndAddActivation contract_with_bias_and_add_activation;
       ContractionWithMul contract_with_mul;
       ContractionWithSwish contract_with_swish;
+      ContractionWithBiasAddGrad contract_with_bias_grad;
 
       if (!item.optimization_options().is_eager_mode) {
         // Remap Conv2D+BiasAdd+Add+relu into the _FusedConv2D.
@@ -2245,6 +2459,13 @@ Status Remapper::Optimize(Cluster* cluster, const GrapplerItem& item,
           TF_RETURN_IF_ERROR(
               AddFusedContractionNode(&ctx, contract_with_swish,
                                       &invalidated_nodes, &nodes_to_delete));
+          continue;
+        }
+        // Remap MatMul+BiasAddGrad into the _fusedMatMulGrad
+        if (FindContractionWithBiasAddGrad(ctx, i, &contract_with_bias_grad)) {
+          TF_RETURN_IF_ERROR(
+              AddFusedContractionGradNode(&ctx, contract_with_bias_grad,
+                                          &invalidated_nodes, &nodes_to_delete));
           continue;
         }
       }

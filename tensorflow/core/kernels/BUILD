@@ -3845,7 +3845,9 @@ tf_mkl_kernel_library(
         "mkl_matmul_op_fused.cc",
     ],
     hdrs = ["mkl_matmul_ops_common.h"],
-    deps = MATH_DEPS + mkl_deps(),
+    deps = [
+        "//tensorflow/core/kernels:no_op"
+    ] + MATH_DEPS + mkl_deps(),
 )
 
 tf_kernel_library(
