@@ -112,6 +112,43 @@ NOTE Do not invoke this operator directly in Python. Graph rewrite pass is
 expected to invoke these operators.
 )doc");
 
+REGISTER_OP("_FusedMatMulGrad")
+    .Input("a: T")
+    .Input("b: T")
+    .Output("product: T")
+    .Output("bias_grad: T")
+    .Attr("transpose_a: bool = false")
+    .Attr("transpose_b: bool = false")
+    .Attr("T: {bfloat16, float}")
+    .Attr("fused_ops: list(string) = []")
+    .SetShapeFn(shape_inference::MatMulGradFilterShape)
+    .Doc(R"doc(
+*NOTE*: Do not invoke this operator directly in Python. Grappler is
+expected to create these operators.
+)doc");
+
+REGISTER_OP("_MklFusedMatMulGrad")
+    .Input("a: T")
+    .Input("b: T")
+    .Input("mkl_a: uint8")
+    .Input("mkl_b: uint8")
+    .Output("product: T")
+    .Output("bias_grad: T")
+    .Output("mkl_product: uint8")
+    .Output("mkl_bias_grad: uint8")
+    .Attr("transpose_a: bool = false")
+    .Attr("transpose_b: bool = false")
+    .Attr("T: {bfloat16, float}")
+    .Attr("fused_ops: list(string) = []")
+    .SetShapeFn(shape_inference::MatMulGradFilterShape)
+    .Doc(R"doc(
+MKL version of FusedMatMulGrad operator. Uses MKL-DNN APIs to implement MatMul
+backward weight operator.
+
+NOTE Do not invoke this operator directly in Python. Graph rewrite pass is
+expected to invoke these operators.
+)doc");
+
 REGISTER_OP("__MklDummyPadWithFusedConv2D")
     .Input("input: T")
     .Input("filter: T")
