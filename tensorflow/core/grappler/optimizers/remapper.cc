@@ -805,33 +805,27 @@ bool FindContractionWithBiasAddAndAdd(const RemapperContext& ctx,
   return true;
 }
 
-bool SharedInputWithMatMul(const RemapperContext& ctx, int node_index,
-                           int node_dz) {
+bool IsLegalMatMulGrad(const RemapperContext& ctx, int node_index, int node_dz) {
   const auto* node_view = ctx.graph_view.GetNode(node_index);
+  const auto* node_def = node_view->node();
   if (node_view == nullptr) return false;
-  const auto* shared_input = node_view->GetRegularFanin(0).node_view();
-  if (shared_input == nullptr) return false;
-  if (shared_input->node_index() == node_dz) {
-    shared_input = node_view->GetRegularFanin(1).node_view();
-  }
 
-  for (const auto x_fanout_i : shared_input->GetRegularFanouts()) {
-    for (const auto x_fanout : x_fanout_i) {
-      const auto* x_node_view = x_fanout.node_view();
-      if (x_node_view->node_index() == node_index) continue;
+  const auto* grad_input = node_view->GetRegularFanin(0).node_view();
+  if (grad_input == nullptr) return false;
 
-      if (!IsMatMul(*(x_node_view->node())) &&
-          x_node_view->GetOp() != kFusedMatMul)
-        continue;
+  // Input grad tensor should have index 1
+  if (grad_input->node_index() == node_dz)
+    return false;
 
-      if (shared_input == nullptr) return false;
-      if (shared_input->node_index() ==
-          x_node_view->GetRegularFanin(0).node_view()->node_index()) {
-        return true;
-      }
-    }
-  }
-  return false;
+  bool transpose_b = true;
+
+  if (!GetNodeAttr(*node_def, "transpose_b", &transpose_b).ok())
+    return false;
+
+  // Transposed input grad tensor is unsafe for BiasAddGrad fusion
+  if (transpose_b) return false;
+
+  return true;
 }
 
 bool FindContractionWithBiasAddGrad(const RemapperContext& ctx, int node_index,
@@ -862,11 +856,14 @@ bool FindContractionWithBiasAddGrad(const RemapperContext& ctx, int node_index,
   //
   // MatMul(forward)     | 0: x, 1; y
   //
-  // Need fuse the BiasAddGrad and MatMulGradFilter, so will find the MatMul
-  // has input x. The input x mean the first input of the forward MatMul.
-  // MatMul backward share one input(x, y) with the forward matmul, using
-  // this shared input(input_x in the code below) to check if this input is
-  // the forward input with index 0.
+  // Need fuse the BiasAddGrad and MatMul. OneDNN inner-product backward
+  // primitive can compute gradients of weights and bias together based on
+  // dz and x/y, where BiasAddGrad shares dz with MatMul. Since current
+  // OneDNN inner-product backward primitive defaults the input:1 as dz,
+  // BiasAddGrad will be fused with the MatMul has dz at input:1, otherwise
+  // the FusedMatMulGrad kernel will need Transpose to maintain correctness.
+  // Furthermore, for x:(m, k) and y:(k, n), dz shape for BiasAddGrad should
+  // be (m, n). So the transpose_b of MatMul to be fused must be false.
 
   const auto* dz = node_view->GetRegularFanin(0).node_view();
   if (dz == nullptr) return false;
@@ -888,13 +885,9 @@ bool FindContractionWithBiasAddGrad(const RemapperContext& ctx, int node_index,
 
   if (matmuls.size() != 2) return false;
 
-  // Check which matmul has shared input(index 0) with the forward matmul.
-  if (SharedInputWithMatMul(ctx, matmuls.at(0), dz->node_index())) {
+  if (IsLegalMatMulGrad(ctx, matmuls.at(0), dz->node_index())) {
     matmul_grad_filter_idx = matmuls.at(0);
-  }
-
-  if (SharedInputWithMatMul(ctx, matmuls.at(1), dz->node_index())) {
-    if (matmul_grad_filter_idx > 0) return false;
+  } else if (IsLegalMatMulGrad(ctx, matmuls.at(1), dz->node_index())) {
     matmul_grad_filter_idx = matmuls.at(1);
   }
 
