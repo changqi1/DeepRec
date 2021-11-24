@@ -409,10 +409,10 @@ class MklFuseMatMulWithBiasAddGrad : public MklRemapperTest {
         found++;
       }
       if (node.op() == "MatMul") {
-        if (!ta && node.input(1) == "weight") {
+        if (!ta && !tb && node.input(1) == "weight") {
           dz = node.input(0);
         }
-        if (ta && node.input(0) == "weight") {
+        if (ta && !tb && node.input(0) == "weight") {
           dz = node.input(1);
         }
         if (dz == "input") {
@@ -420,15 +420,20 @@ class MklFuseMatMulWithBiasAddGrad : public MklRemapperTest {
         }
       }
     }
-    EXPECT_EQ(1, found);
-    EXPECT_EQ(dz, fused_matmul_grad_dz);
 
-    auto tensors_expected = EvaluateNodes(item.graph, item.fetch, item.feed);
-    auto tensors = EvaluateNodes(output, item.fetch, item.feed);
-    EXPECT_EQ(3, tensors_expected.size());
-    EXPECT_EQ(3, tensors.size());
-    test::ExpectTensorNear<float>(tensors_expected[0], tensors[0], 1e-6);
-    test::ExpectTensorNear<float>(tensors_expected[1], tensors[1], 1e-6);
+    if ((!ta && !tb) || (ta && !tb)) {
+      EXPECT_EQ(1, found);
+      EXPECT_EQ(dz, fused_matmul_grad_dz);
+
+      auto tensors_expected = EvaluateNodes(item.graph, item.fetch, item.feed);
+      auto tensors = EvaluateNodes(output, item.fetch, item.feed);
+      EXPECT_EQ(3, tensors_expected.size());
+      EXPECT_EQ(3, tensors.size());
+      test::ExpectTensorNear<float>(tensors_expected[0], tensors[0], 1e-6);
+      test::ExpectTensorNear<float>(tensors_expected[1], tensors[1], 1e-6);
+    } else if ((!ta && tb) || (ta && tb)) {
+      EXPECT_EQ(0, found);
+    }
   }
 };
 
@@ -457,61 +462,6 @@ TEST_F(MklFuseMatMulWithBiasAddGrad, a1b1) {
 }
 
 TEST_F(MklFuseMatMulWithBiasAddGrad, negative0) {
-  using ::tensorflow::ops::Placeholder;
-  tensorflow::Scope s = tensorflow::Scope::NewRootScope();
-
-  int m = 2, k = 3, n = 4;
-
-  auto input_shape = ops::Placeholder::Shape({m, k});
-  auto weight_shape = ops::Placeholder::Shape({k, n});
-
-  auto input = Placeholder(s.WithOpName("input"), DT_FLOAT, input_shape);
-  auto weight = Placeholder(s.WithOpName("weight"), DT_FLOAT, weight_shape);
-
-  auto matmul =
-      ops::MatMul(s.WithOpName("matmul"), input, weight,
-                  ops::MatMul::Attrs().TransposeA(false).TransposeB(false));
-  auto matmul1 =
-      ops::MatMul(s.WithOpName("matmul1"), weight, input,
-                  ops::MatMul::Attrs().TransposeA(true).TransposeB(true));
-  auto bias_add = ops::BiasAddGrad(s.WithOpName("bias_add_grad"), matmul);
-  Output matmul_grad_input;
-  Output matmul_grad_filter;
-  matmul_grad_input =
-      ops::MatMul(s.WithOpName("matmul_grad_input"), matmul, weight,
-                  ops::MatMul::Attrs().TransposeA(false).TransposeB(true));
-  matmul_grad_filter =
-      ops::MatMul(s.WithOpName("matmul_grad_filter"), input, matmul,
-                  ops::MatMul::Attrs().TransposeA(true).TransposeB(false));
-  auto fetch_matmul =
-      ops::Identity(s.WithOpName("fetch_m"), matmul_grad_filter);
-  auto fetch_bias = ops::Identity(s.WithOpName("fetch_b"), bias_add);
-
-  auto input_t = GenerateRandomTensor<DT_FLOAT>({m, k});
-  auto weight_t = GenerateRandomTensor<DT_FLOAT>({k, n});
-
-  GrapplerItem item;
-  item.fetch = {"fetch_m", "fetch_b"};
-  item.feed = {{"input", input_t}, {"weight", weight_t}};
-  TF_CHECK_OK(s.ToGraphDef(&item.graph));
-
-  // Place all nodes on CPU.
-  for (int i = 0; i < item.graph.node_size(); ++i) {
-    item.graph.mutable_node(i)->set_device("/device:CPU:0");
-  }
-
-  Remapper optimizer(RewriterConfig::ON);
-  GraphDef output;
-  TF_CHECK_OK(optimizer.Optimize(nullptr, item, &output));
-
-  for (const NodeDef& node : output.node()) {
-    if (node.name() == "matmul_grad_filter") {
-      EXPECT_EQ("MatMul", node.op());
-    }
-  }
-}
-
-TEST_F(MklFuseMatMulWithBiasAddGrad, negative1) {
   using ::tensorflow::ops::Placeholder;
   tensorflow::Scope s = tensorflow::Scope::NewRootScope();
 
@@ -564,7 +514,7 @@ TEST_F(MklFuseMatMulWithBiasAddGrad, negative1) {
   }
 }
 
-TEST_F(MklFuseMatMulWithBiasAddGrad, negative2) {
+TEST_F(MklFuseMatMulWithBiasAddGrad, negative1) {
   using ::tensorflow::ops::Placeholder;
   tensorflow::Scope s = tensorflow::Scope::NewRootScope();
 
