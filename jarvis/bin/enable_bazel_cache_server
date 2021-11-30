@@ -1,0 +1,7 @@
+#!/bin/bash
+
+sudo docker pull buchgr/bazel-remote-cache
+sudo docker run -d -u $(id -g):$(id -u) -v ~/bazel_cache:/data \
+	-p 9090:8080 -p 9092:9092 buchgr/bazel-remote-cache \
+	--max_size=150
+

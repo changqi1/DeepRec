@@ -1,0 +1,150 @@
+#!/bin/bash
+
+die() {
+  echo $@
+  exit 1
+}
+
+to_lower () {
+  echo "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+to_upper () {
+  echo "$1" | tr '[:lower:]' '[:upper:]'
+}
+
+# Download tensorflow whl package
+function install_tensorflow() {
+    yes | pip3 install $1
+}
+
+# Download training Data
+function install_data() {
+    echo "start download test data ..."
+    case $1 in
+    "WDL")
+        yes | pip3 install --force-reinstall $datas_url/deeprec_estimator/tensorflow_estimator-1.15.1%2Bdeeprec2106-py2.py3-none-any.whl
+        data_items=(eval.csv train.csv)
+        ;;
+
+    "DLRM")
+        data_items=(eval.csv train.csv)
+        ;;
+
+    "DSSM")
+        data_items=(taobao_test_data taobao_train_data)
+        ;;
+
+    "DIN") # todo(marvin): fixed me
+        data_items=(cat_voc.pkl item-info local_test_splitByUser local_train_splitByUser mid_voc.pkl reviews-info uid_voc.pkl)
+        ;;
+
+    "DIEN") # todo(marvin): fixed me
+        data_items=(cat_voc.pkl item-info local_test_splitByUser local_train_splitByUser mid_voc.pkl reviews-info uid_voc.pkl)
+        ;;
+
+    *)
+        die "Unknown model name == $1"
+        ;;
+    esac
+
+    for data_item in ${data_items[*]}
+    do
+        mkdir -p modelzoo/$test_model/data
+        wget $datas_url/modelzoo/$test_model/data/$data_item > /dev/null && 
+            mv $data_item modelzoo/$test_model/data/$data_item
+    done
+}
+
+# prepare to test
+function test_core() {
+    model_name=$(to_upper "$1")
+    DATA_TYPES=(FP32 BF16)
+    cd modelzoo/$model_name
+    for cpu_set in ${CPU_SETS[*]}
+    do
+        DT_option=""
+        for data_type in ${DATA_TYPES[*]}
+        do
+            if [ $data_type = "BF16" ]; then
+                DT_option="--bf16"
+            fi
+            echo ""
+            echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
+
+            echo "---> start test $model_name with cpu_set=$cpu_set, DT=$data_type in $test_platform..."
+            numactl -C $cpu_set python train.py $train_options $DT_option
+
+            echo "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<"
+        done
+    done
+    rm -rf result/*
+}
+
+function test_in_cpx() {
+    export CPU_SETS=(24 24-25 24-27 24-31 24-39)
+    test_core $test_model
+    
+    echo ""
+    echo ">>>>> start test with env macro <<<<<"
+    export TF_LAYOUT_PASS_GRAPH_ENABLE_ONLY_WHITE_LIST=1
+    export TF_LAYOUT_PASS_GRAPH_CAST_FUSION=1
+    test_core $test_model
+}
+
+function test_in_spr() {
+    export CPU_SETS=(56 56-57 56-59 56-63 56-71)
+    export DNNL_MAX_CPU_ISA=AVX512_CORE_AMX
+
+    test_core $test_model
+    
+    echo ""
+    echo ">>>>> start test with env macro <<<<<"
+    export TF_LAYOUT_PASS_GRAPH_ENABLE_ONLY_WHITE_LIST=1
+    export TF_LAYOUT_PASS_GRAPH_CAST_FUSION=1
+    test_core $test_model
+}
+
+function test_in_icx() {
+    export CPU_SETS=(28 28-29 28-31 28-35 28-43)
+
+    test_core $test_model
+
+    echo ""
+    echo ">>>>> start test with env macro <<<<<"
+    export TF_LAYOUT_PASS_GRAPH_ENABLE_ONLY_WHITE_LIST=1
+    export TF_LAYOUT_PASS_GRAPH_CAST_FUSION=1
+    test_core $test_model
+}
+
+function main_test(){
+    case $test_platform in
+    "spr")
+        test_in_spr
+        ;;
+
+    "icx")
+        test_in_icx
+        ;;
+
+    "cpx")
+        test_in_cpx
+        ;;
+
+    *)
+        die "Unknown cpu platform == $test_platform"
+        ;;
+    esac
+}
+
+datas_url=http://crt-e302.sh.intel.com/DeepRec
+test_platform=$1
+test_model=$(to_upper "$2")
+tf_whl=$3
+shift 3
+
+train_options=$@
+
+install_tensorflow $tf_whl
+install_data $test_model
+main_test
