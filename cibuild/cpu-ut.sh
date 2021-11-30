@@ -87,4 +87,4 @@ export TF_BUILD_BAZEL_TARGET="$TF_BUILD_BAZEL_TARGET "\
 "-//tensorflow/python/keras:metrics_test "\
 "-//tensorflow/python/keras:training_test "\
 
-bazel test -c opt --config=opt --verbose_failures -- $TF_BUILD_BAZEL_TARGET
+bazel test -c opt --config=opt --verbose_failures --flaky_test_attempts 1 --keep_going -- $TF_BUILD_BAZEL_TARGET
