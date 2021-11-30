@@ -2422,7 +2422,7 @@ Status Remapper::Optimize(Cluster* cluster, const GrapplerItem& item,
         }
 
         // Remap Conv2D+BiasAdd+Add into the _FusedConv2D.
-        if (FindContractionWithBiasAddAndAdd(ctx, i,
+        if (false && FindContractionWithBiasAddAndAdd(ctx, i,
                                              &contract_with_bias_and_add)) {
           TF_RETURN_IF_ERROR(
               AddFusedContractionNode(&ctx, contract_with_bias_and_add,

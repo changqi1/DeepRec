@@ -844,7 +844,7 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
 
     reco_ops_list_ = gtl::FlatSet<string> {
       "BatchMatMul", "BatchMatMulV2", "BiasAdd", "BiasAddGrad",
-      "_FusedMatMul", "_FusedBatchMatMul", "_FusedBatchMatMulV2",
+      "_FusedBatchMatMul", "_FusedBatchMatMulV2", //"_FusedMatMul", 
       "Identity", "LeakyRelu", "LeakyReluGrad", "MatMul",
       "Relu", "ReluGrad", "Relu6", "Relu6Grad", "Gelu", "GeluGrad",
       "Tanh", "TanhGrad", "Reshape"
