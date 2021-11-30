@@ -1,0 +1,40 @@
+name: pkg-Building
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - master
+
+env:
+  BRANCH_PATH: /home/marvin/share_folder/DeepRec/branch
+  PR_PATH: /home/marvin/share_folder/DeepRec/PR_branch
+
+jobs:
+  build_master_package:
+    runs-on: self-hosted
+    name: Building the ${{github.REF_NAME}} branch package
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Building ${{github.REF_NAME}} branch
+      if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+      run: |
+        ./ci_build bazel_build cpu
+
+    - name: Store ${{github.REF_NAME}} package.
+      if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+      run: |
+        mkdir -p ${BRANCH_PATH}/${{github.REF_NAME}} && mv wheels/tensorflow/* ${BRANCH_PATH}/${{github.REF_NAME}}
+
+    - name: Building ${{github.head_ref}} branch
+      if: github.event_name == 'pull_request'
+      run: |
+        ./ci_build bazel_build cpu
+
+    - name: Store PR ${{github.head_ref}} package.
+      if: github.event_name == 'pull_request'
+      run: |
+        mkdir -p ${PR_PATH}/${{github.head_ref}} && mv wheels/tensorflow/* ${PR_PATH}/${{github.head_ref}}

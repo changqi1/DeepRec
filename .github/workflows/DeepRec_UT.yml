@@ -1,0 +1,28 @@
+# This is a basic workflow that is manually triggered
+
+name: DeepRec UT
+
+# Controls when the action will run. Workflow runs when manually triggered using the UI
+# or API.
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  basic:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: testing basic UT targets, which are same as Upstream
+        run: |
+          ./ci_build cibuild/cpu-ut.sh
+
+  mkl_related:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: testing mkl-related UT targets
+        run: |
+          ./ci_build bazel_build UT
