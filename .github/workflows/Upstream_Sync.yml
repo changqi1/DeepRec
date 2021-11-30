@@ -1,0 +1,44 @@
+name: 'Usptream Sync'
+
+on:
+  schedule:
+    - cron:  '0/5 * * * *'
+  workflow_dispatch:
+
+env:
+  WHEELS_PATH: /home/marvin/share_folder/DeepRec/master-latest
+
+jobs:
+  sync_latest_from_upstream:
+    runs-on: self-hosted
+    name: Sync latest commits from upstream repo
+
+    steps:
+    - name: Checkout target repo
+      uses: actions/checkout@v2
+      with:
+        ref:  up_master
+        persist-credentials: false
+
+    - name: Sync upstream changes
+      id: sync
+      uses: aormsby/Fork-Sync-With-Upstream-action@v3.2
+      with:
+        target_sync_branch: up_master
+        target_repo_token: ${{ secrets.GIT_TOKEN }}
+        upstream_sync_branch: master
+        upstream_sync_repo: AlibabaPAI/DeepRec
+        upstream_repo_access_token: ${{ secrets.GIT_TOKEN }}
+        git_config_pull_rebase: true
+      
+    - name: Checkout `master` branch
+      if: steps.sync.outputs.has_new_commits == 'true'
+      uses: actions/checkout@v2
+      with:
+        ref:  master
+        fetch-depth: 0
+    
+    - name: Rebase `master` branch
+      if: steps.sync.outputs.has_new_commits == 'true'
+      run: |
+        git rebase origin/up_master && git push -f
