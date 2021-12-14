@@ -839,12 +839,10 @@ bool FindContractionWithBiasAddGrad(const RemapperContext& ctx, int node_index,
   const auto* node_def = node_view->node();
   if (!IsBiasAddGrad(*node_def)) return false;
 
-#ifdef ENABLE_INTEL_MKL_BFLOAT16
-  if (!(HasDataType(node_def, DT_FLOAT) || HasDataType(node_def, DT_BFLOAT16)))
+  // TODO(yifeng): OneDNN inner-product fp32 backward primitive shows poor
+  // performance. Remove this workaround when OneDNN is fixed.
+  if (!HasDataType(node_def, DT_BFLOAT16))
     return false;
-#else
-  if (!HasDataType(node_def, DT_FLOAT)) return false;
-#endif
 
   // BiasAddGrad, MatMulGradFilter and MatMulGradInput use the same input.
   //
