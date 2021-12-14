@@ -458,6 +458,15 @@ bool FindContractionWithBias(const RemapperContext& ctx, int node_index,
       IsInPreserveSet(ctx, contraction_node_def))
     return false;
 
+  // Since FusedMatMul has transpose_a = true won't be rewritten
+  // in Mkl layout pass, the fusion also needs to check "transpose_a".
+  bool transpose_a = false;
+  if (IsMatMul(*contraction_node_def)) {
+    TF_CHECK_OK(
+        GetNodeAttr(*contraction_node_def, "transpose_a", &transpose_a));
+    if (transpose_a) return false;
+  }
+
   // Check that data type and data format are supported on assigned device.
   const ContractionWithBiasAdd pattern{contraction_node_view->node_index(),
                                        node_index};
