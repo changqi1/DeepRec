@@ -337,6 +337,7 @@ REGISTER_TEST_ALL_TYPES(FuseDepthwiseConv2DWithBiasAndActivation);
 #ifdef ENABLE_MKLDNN_V1
 class MklFuseMatMulWithBiasAddGrad : public MklRemapperTest {
  public:
+  template <DataType DTYPE>
   void VerifyFused(bool ta, bool tb) {
     using ::tensorflow::ops::Placeholder;
     int m = 2;
@@ -345,35 +346,36 @@ class MklFuseMatMulWithBiasAddGrad : public MklRemapperTest {
 
     tensorflow::Scope s = tensorflow::Scope::NewRootScope();
 
-    auto input_shape = ops::Placeholder::Shape({m, k});
-    if (ta) input_shape = ops::Placeholder::Shape({k, m});
-    auto weight_shape = ops::Placeholder::Shape({k, n});
-    if (tb) weight_shape = ops::Placeholder::Shape({n, k});
+    TensorShape in_shape = ta ? TensorShape({k, m}) : TensorShape({m, k});
+    TensorShape wei_shape = tb ? TensorShape({n, k}) : TensorShape({k, n});
 
+    auto input_shape = ops::Placeholder::Shape(in_shape);
+    auto weight_shape = ops::Placeholder::Shape(wei_shape);
     auto bias_shape = ops::Placeholder::Shape({n});
 
     auto input = Placeholder(s.WithOpName("input"), DT_FLOAT, input_shape);
     auto weight = Placeholder(s.WithOpName("weight"), DT_FLOAT, weight_shape);
     auto bias = Placeholder(s.WithOpName("bias"), DT_FLOAT, bias_shape);
 
+    auto input_cast = ops::Cast(s.WithOpName("input_cast"), input, DTYPE);
+    auto weight_cast = ops::Cast(s.WithOpName("weight_cast"), weight, DTYPE);
+    auto bias_cast = ops::Cast(s.WithOpName("bias_cast"), bias, DTYPE);
+
     auto matmul =
-        ops::MatMul(s.WithOpName("matmul"), input, weight,
+        ops::MatMul(s.WithOpName("matmul"), input_cast, weight_cast,
                     ops::MatMul::Attrs().TransposeA(ta).TransposeB(tb));
-    auto bias_add = ops::BiasAdd(s.WithOpName("bias_add"), matmul, bias);
+    auto bias_add = ops::BiasAdd(s.WithOpName("bias_add"), matmul, bias_cast);
 
     std::vector<Output> grad_outputs;
-    TF_CHECK_OK(AddSymbolicGradients(s, {bias_add}, {input, weight, bias},
-                                     &grad_outputs));
+    TF_CHECK_OK(AddSymbolicGradients(s, {bias_add}, {input_cast, weight_cast, bias_cast}, &grad_outputs));
 
     auto fetch_matmul = ops::Identity(s.WithOpName("fetch_m"), grad_outputs[0]);
     auto fetch_matmul1 =
         ops::Identity(s.WithOpName("fetch_m1"), grad_outputs[1]);
     auto fetch_bias = ops::Identity(s.WithOpName("fetch_b"), grad_outputs[2]);
 
-    auto input_t = GenerateRandomTensor<DT_FLOAT>({m, k});
-    if (ta) input_t = GenerateRandomTensor<DT_FLOAT>({k, m});
-    auto weight_t = GenerateRandomTensor<DT_FLOAT>({k, n});
-    if (tb) weight_t = GenerateRandomTensor<DT_FLOAT>({n, k});
+    auto input_t = GenerateRandomTensor<DT_FLOAT>(in_shape);
+    auto weight_t = GenerateRandomTensor<DT_FLOAT>(wei_shape);
     auto bias_t = GenerateRandomTensor<DT_FLOAT>({n});
 
     GrapplerItem item;
@@ -400,7 +402,7 @@ class MklFuseMatMulWithBiasAddGrad : public MklRemapperTest {
     string dz;
     for (const NodeDef& node : output.node()) {
       if (node.op() == "_FusedMatMulGrad") {
-        EXPECT_EQ("input", node.input(0));
+        EXPECT_EQ("input_cast", node.input(0));
         fused_matmul_grad_dz = node.input(1);
 
         const auto fused_ops = node.attr().at("fused_ops").list().s();
@@ -409,16 +411,22 @@ class MklFuseMatMulWithBiasAddGrad : public MklRemapperTest {
         found++;
       }
       if (node.op() == "MatMul") {
-        if (!ta && !tb && node.input(1) == "weight") {
+        if (!ta && !tb && node.input(1) == "weight_cast") {
           dz = node.input(0);
         }
-        if (ta && !tb && node.input(0) == "weight") {
+        if (ta && !tb && node.input(0) == "weight_cast") {
           dz = node.input(1);
         }
-        if (dz == "input") {
+        if (dz == "input_cast") {
           dz = "";
         }
       }
+    }
+
+    float atol = 1e-6, rtol = 1e-6;
+    if (DTYPE == DT_BFLOAT16) {
+      atol = 1e-2;
+      rtol = 1e-2;
     }
 
     if ((!ta && !tb) || (ta && !tb)) {
@@ -429,36 +437,36 @@ class MklFuseMatMulWithBiasAddGrad : public MklRemapperTest {
       auto tensors = EvaluateNodes(output, item.fetch, item.feed);
       EXPECT_EQ(3, tensors_expected.size());
       EXPECT_EQ(3, tensors.size());
-      test::ExpectTensorNear<float>(tensors_expected[0], tensors[0], 1e-6);
-      test::ExpectTensorNear<float>(tensors_expected[1], tensors[1], 1e-6);
+      test::ExpectClose(tensors_expected[0], tensors[0], atol, rtol);
+      test::ExpectClose(tensors_expected[1], tensors[1], atol, rtol);
     } else if ((!ta && tb) || (ta && tb)) {
       EXPECT_EQ(0, found);
     }
   }
 };
 
-TEST_F(MklFuseMatMulWithBiasAddGrad, a0b0) {
+TEST_F(MklFuseMatMulWithBiasAddGrad, bf16_a0b0) {
   bool traspose_a = false;
   bool traspose_b = false;
-  this->VerifyFused(traspose_a, traspose_b);
+  this->VerifyFused<DT_BFLOAT16>(traspose_a, traspose_b);
 }
 
-TEST_F(MklFuseMatMulWithBiasAddGrad, a0b1) {
+TEST_F(MklFuseMatMulWithBiasAddGrad, bf16_a0b1) {
   bool traspose_a = false;
   bool traspose_b = true;
-  this->VerifyFused(traspose_a, traspose_b);
+  this->VerifyFused<DT_BFLOAT16>(traspose_a, traspose_b);
 }
 
-TEST_F(MklFuseMatMulWithBiasAddGrad, a1b0) {
+TEST_F(MklFuseMatMulWithBiasAddGrad, bf16_a1b0) {
   bool traspose_a = true;
   bool traspose_b = false;
-  this->VerifyFused(traspose_a, traspose_b);
+  this->VerifyFused<DT_BFLOAT16>(traspose_a, traspose_b);
 }
 
-TEST_F(MklFuseMatMulWithBiasAddGrad, a1b1) {
+TEST_F(MklFuseMatMulWithBiasAddGrad, bf16_a1b1) {
   bool traspose_a = true;
   bool traspose_b = true;
-  this->VerifyFused(traspose_a, traspose_b);
+  this->VerifyFused<DT_BFLOAT16>(traspose_a, traspose_b);
 }
 
 TEST_F(MklFuseMatMulWithBiasAddGrad, negative0) {
