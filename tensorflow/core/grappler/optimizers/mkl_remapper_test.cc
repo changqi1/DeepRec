@@ -14,10 +14,10 @@ limitations under the License.
 ==============================================================================*/
 
 #ifdef INTEL_MKL
-#include "tensorflow/cc/ops/nn_ops_internal.h"
 #include "tensorflow/cc/client/client_session.h"
 #include "tensorflow/cc/framework/grad_op_registry.h"
 #include "tensorflow/cc/framework/gradients.h"
+#include "tensorflow/cc/ops/nn_ops_internal.h"
 #include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/node_def_util.h"
@@ -367,7 +367,8 @@ class MklFuseMatMulWithBiasAddGrad : public MklRemapperTest {
     auto bias_add = ops::BiasAdd(s.WithOpName("bias_add"), matmul, bias_cast);
 
     std::vector<Output> grad_outputs;
-    TF_CHECK_OK(AddSymbolicGradients(s, {bias_add}, {input_cast, weight_cast, bias_cast}, &grad_outputs));
+    TF_CHECK_OK(AddSymbolicGradients(
+        s, {bias_add}, {input_cast, weight_cast, bias_cast}, &grad_outputs));
 
     auto fetch_matmul = ops::Identity(s.WithOpName("fetch_m"), grad_outputs[0]);
     auto fetch_matmul1 =
@@ -857,11 +858,11 @@ TEST_F(MklRemapperTest, FuseMatMulWithBiasAndGelu) {
         const auto fused_ops = node.attr().at("fused_ops").list().s();
         ASSERT_EQ(fused_ops.size(), 2);
         EXPECT_EQ(fused_ops[0], "BiasAdd");
-       if(activation == "Gelu_tanh") {
-         EXPECT_EQ(fused_ops[1], "Gelu");
-       } else {
-         EXPECT_EQ(fused_ops[1], "Gelu_erf");
-       }
+        if (activation == "Gelu_tanh") {
+          EXPECT_EQ(fused_ops[1], "Gelu");
+        } else {
+          EXPECT_EQ(fused_ops[1], "Gelu_erf");
+        }
         found++;
       }
     }
