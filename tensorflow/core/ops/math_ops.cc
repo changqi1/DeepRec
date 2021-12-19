@@ -1005,7 +1005,7 @@ REGISTER_OP("_FusedMatMul")
     .Output("product: T")
     .Attr("transpose_a: bool = false")
     .Attr("transpose_b: bool = false")
-#if defined(INTEL_MKL) && defined(ENABLE_INTEL_MKL_BFLOAT16)
+#if defined(INTEL_MKL)
     .Attr("T: {bfloat16, float}")
 #else
     .Attr("T: {float}")

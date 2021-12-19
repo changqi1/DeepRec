@@ -334,7 +334,6 @@ CREATE_CONV2DFUSION_ADD_BCAST_TEST(AddV2);
 REGISTER_TEST_ALL_TYPES(FuseDepthwiseConv2DWithBiasAndActivation);
 #undef REGISTER_TEST
 
-#ifdef ENABLE_MKLDNN_V1
 class MklFuseMatMulWithBiasAddGrad : public MklRemapperTest {
  public:
   template <DataType DTYPE>
@@ -1046,7 +1045,6 @@ class MklRemapperSwishTest : public GrapplerTest {
 
 TEST_F(MklRemapperSwishTest, F32) { RunTest<DT_FLOAT>(); }
 TEST_F(MklRemapperSwishTest, BF16) { RunTest<DT_BFLOAT16>(); }
-#endif  // ENABLE_MKLDNN_V1
 
 }  // namespace grappler
 }  // namespace tensorflow

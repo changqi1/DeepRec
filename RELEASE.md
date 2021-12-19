@@ -8,7 +8,7 @@
     the 2.0 Python API.
 *   Turn on MKL-DNN contraction kernels by default. MKL-DNN dynamically
     dispatches the best kernel implementation based on CPU vector architecture.
-    To disable them, build with --define=tensorflow_mkldnn_contraction_kernel=0.
+    To disable them, build with --define=tensorflow_dnnl_contraction_kernel=0.
 
 ## Behavioral changes
 
@@ -148,7 +148,7 @@
     *   Turn on MKL-DNN contraction kernels by default. MKL-DNN dynamically
         dispatches the best kernel implementation based on CPU vector
         architecture. To disable them, build with
-        --define=tensorflow_mkldnn_contraction_kernel=0.
+        --define=tensorflow_dnnl_contraction_kernel=0.
     *   Support for multi-host ncclAllReduce in Distribution Strategy.
     *   Expose a flag that allows the number of threads to vary across Python
         benchmarks.

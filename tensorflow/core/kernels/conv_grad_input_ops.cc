@@ -283,7 +283,7 @@ struct Conv2DCustomBackpropInputMatMulFunctor {
   }
 };
 
-#if defined(TENSORFLOW_USE_MKLDNN_CONTRACTION_KERNEL)
+#if defined(TENSORFLOW_USE_DNNL_CONTRACTION_KERNEL)
 template <>
 struct Conv2DCustomBackpropInputMatMulFunctor<float> {
   using T = float;
