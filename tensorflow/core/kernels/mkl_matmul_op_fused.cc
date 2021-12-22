@@ -348,7 +348,24 @@ class MklFusedMatMulGradOp : public OpKernel {
               "Matrix size-incompatible: In[0]: ", src_tf_shape.DebugString(),
               ", In[1]: ", diff_dst_tf_shape.DebugString()));
 
+      Tensor* diff_weight_tensor = nullptr;
+      Tensor* bias_tensor = nullptr;
+
       if (batch == 0 || channel == 0) {
+        TensorShape diff_weight_tensor_shape({k, channel});
+        if (transpose_b_) diff_weight_tensor_shape = {channel, k};
+        MklDnnShape diff_weight_mkl_shape;
+        diff_weight_mkl_shape.SetMklTensor(false);
+        AllocateOutputSetMklShape(ctx, 0, &diff_weight_tensor,
+                                  diff_weight_tensor_shape,
+                                  diff_weight_mkl_shape);
+
+        TensorShape bias_tensor_shape({channel});
+        MklDnnShape bias_mkl_shape;
+        bias_mkl_shape.SetMklTensor(false);
+        AllocateOutputSetMklShape(ctx, 1, &bias_tensor, bias_tensor_shape,
+                                  bias_mkl_shape);
+
         return;
       }
 
@@ -371,8 +388,6 @@ class MklFusedMatMulGradOp : public OpKernel {
       MklDnnMatMulBwdFilterPrimitive<T>* matmul_prim =
           MklDnnMatMulBwdFilterPrimitiveFactory<T>::Get(matmul_params);
 
-      Tensor* diff_weight_tensor = nullptr;
-      Tensor* bias_tensor = nullptr;
       std::shared_ptr<mkldnn::inner_product_backward_weights::primitive_desc>
           matmul_pd = matmul_prim->GetPrimitiveDesc();
 

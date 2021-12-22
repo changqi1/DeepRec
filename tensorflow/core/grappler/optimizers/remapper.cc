@@ -803,16 +803,17 @@ bool FindContractionWithBiasAddAndAdd(const RemapperContext& ctx,
   return true;
 }
 
-bool IsLegalMatMulGrad(const RemapperContext& ctx, int node_index, int node_dz) {
+bool IsLegalMatMulGrad(const RemapperContext& ctx, int node_index,
+                       int node_dz) {
   const auto* node_view = ctx.graph_view.GetNode(node_index);
   const auto* node_def = node_view->node();
   if (node_view == nullptr) return false;
 
-  const auto* grad_input = node_view->GetRegularFanin(0).node_view();
+  const auto* grad_input = node_view->GetRegularFanin(1).node_view();
   if (grad_input == nullptr) return false;
 
   // Input grad tensor should have index 1
-  if (grad_input->node_index() == node_dz)
+  if (grad_input->node_index() != node_dz)
     return false;
 
   bool transpose_b = true;
@@ -1789,16 +1790,13 @@ Status AddFusedContractionGradNode(RemapperContext* ctx,
   auto* fused_op_attr = fused_op.mutable_attr();
   auto& contraction_attr = contraction.attr();
 
-  if (contraction.input(0) == bias_add_grad.input(0)) {
-    fused_op.add_input(contraction.input(1));  // 0: input
-    (*fused_op_attr)["transpose_a"] = contraction_attr.at("transpose_b");
-    (*fused_op_attr)["transpose_b"] = contraction_attr.at("transpose_a");
-  } else {
-    fused_op.add_input(contraction.input(0));  // 0: input
-    const tensorflow::AttrValue ta_attr = contraction_attr.at("transpose_a");
-    SetAttrValue(!ta_attr.b(), &(*fused_op_attr)["transpose_a"]);
-    (*fused_op_attr)["transpose_b"] = contraction_attr.at("transpose_b");
-  }
+  // dz should come from input:1
+  fused_op.add_input(contraction.input(0));  // 0: input
+  // to infer transpose_{a/b} of forward MatMul for OneDNN's requirement
+  const tensorflow::AttrValue ta_attr = contraction_attr.at("transpose_a");
+  SetAttrValue(!ta_attr.b(), &(*fused_op_attr)["transpose_a"]);
+  (*fused_op_attr)["transpose_b"] = contraction_attr.at("transpose_b");
+
   fused_op.add_input(bias_add_grad.input(0));  // 1: dz
   (*fused_op_attr)["T"] = contraction_attr.at("T");
 
