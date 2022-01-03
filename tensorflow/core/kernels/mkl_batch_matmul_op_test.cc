@@ -14,20 +14,32 @@ limitations under the License.
 ==============================================================================*/
 
 #ifdef INTEL_MKL
-
+#include <functional>
+#include <vector>
+#include "mkldnn.hpp"
+#include "absl/strings/match.h"
+#include "tensorflow/cc/ops/const_op.h"
+#include "tensorflow/cc/ops/nn_ops.h"
+#include "tensorflow/cc/ops/array_ops.h"
+#include "tensorflow/cc/ops/array_ops_internal.h"
+#include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/core/common_runtime/kernel_benchmark_testlib.h"
-#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/fake_input.h"
+#include "tensorflow/core/framework/node_def_builder.h"
 #include "tensorflow/core/framework/tensor.h"
-#include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.pb.h"
-#include "tensorflow/core/graph/graph.h"
-#include "tensorflow/core/graph/node_builder.h"
-#include "tensorflow/core/graph/testlib.h"
-#include "tensorflow/core/kernels/broadcast_to_op.h"
-#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/kernels/ops_testutil.h"
+#include "tensorflow/core/kernels/ops_util.h"
+#include "tensorflow/core/platform/cpu_info.h"
+#include "tensorflow/core/platform/env.h"
+#include "tensorflow/core/platform/stacktrace_handler.h"
+#include "tensorflow/core/platform/str_util.h"
 #include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/platform/test_benchmark.h"
 #include "tensorflow/core/public/session.h"
+#include "tensorflow/core/framework/fake_input.h"
+#include <gtest/gtest.h>
+#include "tensorflow/core/util/mkl_util.h"
 
 namespace tensorflow {
 namespace {
