@@ -14,23 +14,206 @@ limitations under the License.
 ==============================================================================*/
 
 #ifdef INTEL_MKL
-
+#include <functional>
+#include <vector>
+#include "mkldnn.hpp"
+#include "absl/strings/match.h"
+#include "tensorflow/cc/ops/const_op.h"
+#include "tensorflow/cc/ops/nn_ops.h"
+#include "tensorflow/cc/ops/array_ops.h"
+#include "tensorflow/cc/ops/array_ops_internal.h"
+#include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/core/common_runtime/kernel_benchmark_testlib.h"
-#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/fake_input.h"
+#include "tensorflow/core/framework/node_def_builder.h"
 #include "tensorflow/core/framework/tensor.h"
-#include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/types.pb.h"
-#include "tensorflow/core/graph/graph.h"
-#include "tensorflow/core/graph/node_builder.h"
-#include "tensorflow/core/graph/testlib.h"
-#include "tensorflow/core/kernels/broadcast_to_op.h"
-#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/kernels/ops_testutil.h"
+#include "tensorflow/core/kernels/ops_util.h"
+#include "tensorflow/core/platform/cpu_info.h"
+#include "tensorflow/core/platform/env.h"
+#include "tensorflow/core/platform/stacktrace_handler.h"
+#include "tensorflow/core/platform/str_util.h"
 #include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/platform/test_benchmark.h"
 #include "tensorflow/core/public/session.h"
+#include "tensorflow/core/framework/fake_input.h"
+#include <gtest/gtest.h>
+#include "tensorflow/core/util/mkl_util.h"
 
 namespace tensorflow {
 namespace {
+
+//----------------------------------------------------------------------------//
+// Batch Matmul Tests are below.                                              //
+//----------------------------------------------------------------------------//
+
+namespace MKLBatchMatmulTestDefs {
+    typedef std::tuple<
+    DataType,                   // input_type
+    std::vector<long long int>, // input_size_0
+    std::vector<long long int>, // input_size_1
+    std::vector<bool>           // attr
+    > BatchMatmulTestParams;
+    std::vector<DataType> dataTypes {
+        DataType::DT_FLOAT,
+        DataType::DT_BFLOAT16
+    };
+    std::vector<std::vector<long long int>> SIZES_3D_0 = {{32, 1, 48}, {1, 32, 48}, {48, 32, 1}, {50, 50, 16}, {48, 1, 32}, {1, 48, 32}};
+    std::vector<std::vector<long long int>> SIZES_3D_1 = {{32, 24, 1}, {1, 16, 32}, {48, 24, 32}, {50, 24, 50}, {48, 16, 1}, {1, 24, 48}};
+    std::vector<std::vector<bool>> ADJ = {{false, true}, {false, false}};
+} // namespace MKLBatchMatmulTestDefs
+
+using namespace MKLBatchMatmulTestDefs;
+class BatchMatmulTestBase :
+    public ::testing::WithParamInterface<MKLBatchMatmulTestDefs::BatchMatmulTestParams>,
+    public OpsTestBase {
+ private:
+    // Test definition (straight from Params, filled in SetUp)
+    DataType input_type;
+    std::vector<long long int> input_size_0;
+    std::vector<long long int> input_size_1;
+    std::vector<bool> adj;
+    // Test input Tensors (filled in SetUp)
+    Tensor input_0;
+    Tensor input_1;
+    // Test attributes (specified in SetUp)
+    bool adj_x;
+    bool adj_y;
+    // Test output Tensors (filled in Run method)
+    Tensor mkl_values;
+    Tensor default_values;
+
+    static void RunAndFetch(const tensorflow::Scope& root, const string& fetch,
+                          Tensor* output) {
+    tensorflow::GraphDef graph;
+    TF_ASSERT_OK(root.ToGraphDef(&graph));
+    std::unique_ptr<tensorflow::Session> session(
+        tensorflow::NewSession(tensorflow::SessionOptions()));
+    TF_ASSERT_OK(session->Create(graph));
+    std::vector<Tensor> unfused_tensors;
+    TF_ASSERT_OK(session->Run({}, {fetch}, {}, &unfused_tensors));
+    *output = unfused_tensors[0];
+    }
+
+    void runDefault() {
+          auto root = tensorflow::Scope::NewRootScope();
+          auto input_op_0 =
+              ops::Const(root.WithOpName("input_0"), Input::Initializer(input_0));
+          auto input_op_1 = 
+              ops::Const(root.WithOpName("input_1"), Input::Initializer(input_1));
+          Output next_op = ops::BatchMatMul(root.WithOpName("batchmatmul"), input_op_0, input_op_1);
+          string last_op = "batchmatmul";
+          RunAndFetch(root, last_op, &default_values);
+    };
+
+    void runMkl() {
+    TF_EXPECT_OK(
+        NodeDefBuilder("mkl_batch_matmul_op", "_MklBatchMatMul") //build node
+            .Input(FakeInput(input_type))
+            .Input(FakeInput(input_type))
+            .Attr("adj_x", adj_x)
+            .Attr("adj_y", adj_y)
+            .Attr("_kernel", "MklNameChangeOp")
+            .Finalize(node_def()));
+    TF_EXPECT_OK(InitOp()); //initial
+    switch(input_type) {
+        case DT_FLOAT:
+            AddInputFromArray<float>(input_0.shape(), input_0.flat<float>()); // input_0
+            AddInputFromArray<float>(input_1.shape(), input_1.flat<float>()); // input_1
+            break;
+        case DT_BFLOAT16:
+            AddInputFromArray<bfloat16>(input_0.shape(), input_0.flat<bfloat16>()); // input_0
+            AddInputFromArray<bfloat16>(input_1.shape(), input_1.flat<bfloat16>()); // input_1
+            break;
+        default:
+            GTEST_FAIL() << "Unexpected DataType";
+    }
+    TF_EXPECT_OK(RunOpKernel()); //Run the node computation
+    mkl_values = *GetOutput(0); //Get output
+    }
+ public:
+    static std::string getTestCaseName(::testing::TestParamInfo<BatchMatmulTestParams> obj) {
+        DataType input_type;
+        std::vector<long long int> input_size_0;
+        std::vector<long long int> input_size_1;
+        std::vector<bool> adj;
+        std::tie(input_type, input_size, adj) = obj.param;
+        std::ostringstream result;
+        result << "BatchMatMul_Type_";
+        switch(input_type) {
+            case DataType::DT_FLOAT:
+                result << "FLOAT";
+                break;
+            case DataType::DT_BFLOAT16:
+                result << "BFLOAT16";
+                break;
+            default:
+                result << "UNRECOGNISED_TYPE";
+        }
+        result << "_Sizes_0";
+        for (auto &x : input_size_0) {
+            result << "_" << x;
+        }
+        result << "_Sizes_1";
+        for (auto &x : input_size_1) {
+            result << "_" << x;
+        }
+        for (auto &x : adj){
+            x ? result << "_true" : result << "_false";
+        }
+        return result.str();
+    }
+
+    void SetUp() {
+        std::tie(input_type, input_size_0, input_size_1, adj) = this->GetParam();
+        input_0 = Tensor(input_type, TensorShape(tensorflow::gtl::ArraySlice<long long int>(input_size_0.data(), input_size_0.size())));
+        input_1 = Tensor(input_type, TensorShape(tensorflow::gtl::ArraySlice<long long int>(input_size_1.data(), input_size_1.size())));
+        switch(input_type) {
+            case DT_FLOAT:
+                input_0.flat<float>() = input_0.flat<float>().template setRandom<Eigen::internal::NormalRandomGenerator<float>>(); // input_0
+                input_1.flat<float>() = input_1.flat<float>().template setRandom<Eigen::internal::NormalRandomGenerator<float>>(); // input_1
+                break;
+            case DT_BFLOAT16:
+                input_0.flat<bfloat16>() = input_0.flat<bfloat16>().template setRandom<Eigen::internal::NormalRandomGenerator<bfloat16>>(); // input_0
+                input_1.flat<bfloat16>() = input_1.flat<bfloat16>().template setRandom<Eigen::internal::NormalRandomGenerator<bfloat16>>(); // input_1
+                break;
+            default:
+                GTEST_FAIL() << "Unexpected DataType";
+        }
+        adj_x = adj[0];
+        adj_y = adj[1];
+    }
+
+    void Run() {
+        runDefault();
+        runMkl();
+    }
+
+    void Validate() {
+        ASSERT_EQ(default_values.dtype(), mkl_values.dtype());
+        ASSERT_EQ(default_values.shape(), mkl_values.shape());
+        test::ExpectClose(default_values, mkl_values, 1e-5);
+    }
+};
+
+TEST_P(BatchMatmulTestBase, CompareWithRefs) {
+    SetUp();
+    Run();
+    Validate();
+};
+
+INSTANTIATE_TEST_CASE_P(BatchMatmul3D, BatchMatmulTestBase,
+    ::testing::Combine(
+        ::testing::ValuesIn(dataTypes),
+        ::testing::ValuesIn(SIZES_3D_0),
+        ::testing::ValuesIn(SIZES_3D_1),
+        ::testing::ValuesIn(ADJ)),
+    BatchMatmulTestBase::getTestCaseName);
+
+//----------------------------------------------------------------------------//
+// Performance benchmarks are below.                                          //
+//----------------------------------------------------------------------------//
 
 Node* BatchMatmul(const string& kind, Graph* g, Node* in0, Node* in1, bool adj_x, bool adj_y) {
   Node* ret;
