@@ -62,6 +62,9 @@ namespace MKLBatchMatmulTestDefs {
     std::vector<std::vector<long long int>> SIZES_3D_0 = {{32, 1, 48}, {1, 32, 48}, {48, 32, 1}, {50, 50, 16}, {48, 1, 32}, {1, 48, 32}};
     std::vector<std::vector<long long int>> SIZES_3D_1 = {{32, 24, 1}, {1, 16, 32}, {48, 24, 32}, {50, 24, 50}, {48, 16, 1}, {1, 24, 48}};
     std::vector<std::vector<bool>> ADJ = {{false, true}, {false, false}};
+    // Test attributes (specified in SetUp)
+    Bool adj_x;
+    Bool adj_y;
 } // namespace MKLBatchMatmulTestDefs
 
 using namespace MKLBatchMatmulTestDefs;
@@ -77,9 +80,6 @@ class BatchMatmulTestBase :
     // Test input Tensors (filled in SetUp)
     Tensor input_0;
     Tensor input_1;
-    // Test attributes (specified in SetUp)
-    Bool adj_x;
-    Bool adj_y;
     // Test output Tensors (filled in Run method)
     Tensor mkl_values;
     Tensor default_values;
