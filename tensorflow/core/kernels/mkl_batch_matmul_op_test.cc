@@ -62,9 +62,6 @@ namespace MKLBatchMatmulTestDefs {
     std::vector<std::vector<long long int>> SIZES_3D_0 = {{32, 1, 48}, {1, 32, 48}, {48, 32, 1}, {50, 50, 16}, {48, 1, 32}, {1, 48, 32}};
     std::vector<std::vector<long long int>> SIZES_3D_1 = {{32, 24, 1}, {1, 16, 32}, {48, 24, 32}, {50, 24, 50}, {48, 16, 1}, {1, 24, 48}};
     std::vector<std::vector<bool>> ADJ = {{false, true}, {false, false}};
-    // Test attributes (specified in SetUp)
-    Bool adj_x;
-    Bool adj_y;
 } // namespace MKLBatchMatmulTestDefs
 
 using namespace MKLBatchMatmulTestDefs;
@@ -80,6 +77,9 @@ class BatchMatmulTestBase :
     // Test input Tensors (filled in SetUp)
     Tensor input_0;
     Tensor input_1;
+    // Test attributes (specified in SetUp)
+    bool adj_x;
+    bool adj_y;
     // Test output Tensors (filled in Run method)
     Tensor mkl_values;
     Tensor default_values;
@@ -109,28 +109,28 @@ class BatchMatmulTestBase :
 
     void runMkl() {
     TF_EXPECT_OK(
-        NodeDefBuilder("mkl_batch_matmul_op", "_MklBatchMatMul") //build node
-            .Input(FakeInput(input_type))
-            .Input(FakeInput(input_type))
-            .Attr("adj_x", adj_x)
-            .Attr("adj_y", adj_y)
-            .Attr("_kernel", "MklNameChangeOp")
-            .Finalize(node_def()));
-    TF_EXPECT_OK(InitOp()); //initial
-    switch(input_type) {
-        case DT_FLOAT:
-            AddInputFromArray<float>(input_0.shape(), input_0.flat<float>()); // input_0
-            AddInputFromArray<float>(input_1.shape(), input_1.flat<float>()); // input_1
-            break;
-        case DT_BFLOAT16:
-            AddInputFromArray<bfloat16>(input_0.shape(), input_0.flat<bfloat16>()); // input_0
-            AddInputFromArray<bfloat16>(input_1.shape(), input_1.flat<bfloat16>()); // input_1
-            break;
-        default:
-            GTEST_FAIL() << "Unexpected DataType";
-    }
-    TF_EXPECT_OK(RunOpKernel()); //Run the node computation
-    mkl_values = *GetOutput(0); //Get output
+          NodeDefBuilder("mkl_batch_matmul_op", "_MklBatchMatMul") //build node
+              .Input(FakeInput(input_type))
+              .Input(FakeInput(input_type))
+              .Attr("adj_x", adj_x)
+              .Attr("adj_y", adj_y)
+              .Attr("_kernel", "MklNameChangeOp")
+              .Finalize(node_def()));
+      TF_EXPECT_OK(InitOp()); //initial
+      switch(input_type) {
+          case DT_FLOAT:
+              AddInputFromArray<float>(input_0.shape(), input_0.flat<float>()); // input_0
+              AddInputFromArray<float>(input_1.shape(), input_1.flat<float>()); // input_1
+              break;
+          case DT_BFLOAT16:
+              AddInputFromArray<bfloat16>(input_0.shape(), input_0.flat<bfloat16>()); // input_0
+              AddInputFromArray<bfloat16>(input_1.shape(), input_1.flat<bfloat16>()); // input_1
+              break;
+          default:
+              GTEST_FAIL() << "Unexpected DataType";
+      }
+      TF_EXPECT_OK(RunOpKernel()); //Run the node computation
+      mkl_values = *GetOutput(0); //Get outp
     }
  public:
     static std::string getTestCaseName(::testing::TestParamInfo<BatchMatmulTestParams> obj) {
@@ -138,7 +138,7 @@ class BatchMatmulTestBase :
         std::vector<long long int> input_size_0;
         std::vector<long long int> input_size_1;
         std::vector<bool> adj;
-        std::tie(input_type, input_size, adj) = obj.param;
+        std::tie(input_type, input_size_0, input_size_1, adj) = obj.param;
         std::ostringstream result;
         result << "BatchMatMul_Type_";
         switch(input_type) {
@@ -151,17 +151,14 @@ class BatchMatmulTestBase :
             default:
                 result << "UNRECOGNISED_TYPE";
         }
-        result << "_Sizes_0";
+        /*result << "_Sizes_0";
         for (auto &x : input_size_0) {
             result << "_" << x;
         }
         result << "_Sizes_1";
         for (auto &x : input_size_1) {
             result << "_" << x;
-        }
-        for (auto &x : adj){
-            x ? result << "_true" : result << "_false";
-        }
+        }*/
         return result.str();
     }
 
@@ -199,8 +196,11 @@ class BatchMatmulTestBase :
 
 TEST_P(BatchMatmulTestBase, CompareWithRefs) {
     SetUp();
+    std::cout << "SetUp OK" << std::endl;
     Run();
+    std::cout << "Run OK" << std::endl;
     Validate();
+    std::cout << "Validate OK" << std::endl;
 };
 
 INSTANTIATE_TEST_CASE_P(BatchMatmul3D, BatchMatmulTestBase,
