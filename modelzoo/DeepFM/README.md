@@ -6,9 +6,12 @@
     - [Stand-alone Training](#stand-alone-training)
     - [Distribute Training](#distribute-training)
   - [Benchmark](#benchmark)
-    - [Test Environment](#test-environment)
-    - [Standing-alone training](#standing-alone-training)
-    - [Distribute Training](#distribute-training-1)
+    - [Stand-alone Training](#stand-alone-training-1)
+      - [Test Environment](#test-environment)
+      - [Performance Result](#performance-result)
+    - [Distributed Training](#distributed-training)
+      - [Test Environment](#test-environment-1)
+      - [Performance Result](#performance-result-1)
   - [Dataset](#dataset)
     - [Prepare](#prepare)
     - [Fields](#fields)
@@ -94,14 +97,26 @@ input:                                  |               |
 - `replicas`: numbers of cheif, worker, ps.
 - `image`: where nodes can pull the docker image.
 - `claimName`: PVC name.
-
 ## Benchmark
-The benchmark of example
-### Test Environment
-The information of hardware & software test environment
+### Stand-alone Training
+#### Test Environment
+The benchmark is performed on the [Alibaba Cloud ECS general purpose instance family with high clock speeds - **ecs.hfg7.2xlarge**](https://help.aliyun.com/document_detail/25378.html?spm=5176.2020520101.vmBInfo.instanceType.4a944df5PvCcED#hfg7).
+- Hardware 
+  - Model name:          Intel(R) Xeon(R) Platinum 8369HC CPU @ 3.30GHz
+  - CPU(s):              8
+  - Socket(s):           1
+  - Core(s) per socket:  4
+  - Thread(s) per core:  2
+  - Memory:              32G
 
-### Standing-alone training 
-The benchmark of Standing-alone training 
+- Software
+  - kernel:                 4.18.0-305.12.1.el8_4.x86_64
+  - OS:                     CentOS Linux release 8.4.2105
+  - GCC:                    8.4.1
+  - Docker:                 20.10.9
+  - Python:                 3.6.8
+
+#### Performance Result
 
 <table>
     <tr>
@@ -113,33 +128,77 @@ The benchmark of Standing-alone training
         <td>Globalsetp/Sec</td>
     </tr>
     <tr>
-        <td rowspan="3">DeepFM</td>
+        <td rowspan="3">WDL</td>
         <td>Community TensorFlow</td>
         <td>FP32</td>
-        <td></td>
-        <td></td>
-        <td> (baseline)</td>
+        <td>0.745968</td>
+        <td>0.744965</td>
+        <td>35.9477 (baseline)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32</td>
-        <td></td>
-        <td></td>
-        <td> (+1.00x)</td>
+        <td>0.745968</td>
+        <td>0.744068</td>
+        <td>39.2689 (109.24%)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32+BF16</td>
-        <td></td>
-        <td></td>
-        <td> (+1.00x)</td>
+        <td>0.745968</td>
+        <td>0.740346</td>
+        <td>43.8796 (122.07%)</td>
     </tr>
 </table>
 
 - Community TensorFlow version is v1.15.5.
 
-### Distribute Training 
-The benchmark of distribute training 
+
+### Distributed Training
+#### Test Environment
+The benchmark is performed on the Alibaba Cloud K8S cluster composed of the following ten machines.
+
+- Hardware 
+  - Model name:          Intel(R) Xeon(R) Platinum 8369HC CPU @ 3.30GHz
+  - CPU(s):              8
+  - Socket(s):           1
+  - Core(s) per socket:  4
+  - Thread(s) per core:  2
+  - Memory:              32G
+
+
+#### Performance Result  
+
+<table>
+    <tr>
+        <td colspan="1"></td>
+        <td>Framework</td>
+        <td>Protocol</td>
+        <td>DType</td>
+        <td>Globalsetp/Sec</td>
+    </tr>
+    <tr>
+        <td rowspan="3">WDL</td>
+        <td>Community TensorFlow</td>
+        <td>GRPC</td>
+        <td>FP32</td>
+        <td>180.628 (baseline)</td>
+    </tr>
+    <tr>
+        <td>DeepRec w/ oneDNN</td>
+        <td>GRPC</td>
+        <td>FP32</td>
+        <td>183.525 (101.60%)</td>
+    </tr>
+    <tr>
+        <td>DeepRec w/ oneDNN</td>
+        <td>GRPC</td>
+        <td>FP32+BF16</td>
+        <td>186.365 (103.18%)</td>
+    </tr>
+</table>
+
+- Community TensorFlow version is v1.15.5.
 
 ## Dataset
 Train & eval dataset using ***Kaggle Display Advertising Challenge Dataset (Criteo Dataset)***.

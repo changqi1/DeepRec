@@ -9,6 +9,9 @@
     - [Stand-alone Training](#stand-alone-training-1)
       - [Test Environment](#test-environment)
       - [Performance Result](#performance-result)
+    - [Distributed Training](#distributed-training)
+      - [Test Environment](#test-environment-1)
+      - [Performance Result](#performance-result-1)
   - [Dataset](#dataset)
     - [Prepare](#prepare)
     - [Fields](#fields)
@@ -125,23 +128,69 @@ The benchmark is performed on the [Alibaba Cloud ECS general purpose instance fa
         <td rowspan="3">DLRM</td>
         <td>Community TensorFlow</td>
         <td>FP32</td>
-        <td>0.74596</td>
-        <td>0.74893</td>
-        <td>97.7156 (baseline)</td>
+        <td>0.745968</td>
+        <td>0.768852</td>
+        <td>72.48421 (baseline)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32</td>
-        <td>0.74596</td>
-        <td>0.74683</td>
-        <td>106.7571 (+1.09x)</td>
+        <td>0.745968</td>
+        <td>0.771052</td>
+        <td>93.00052 (128.30%)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32+BF16</td>
-        <td>0.74596</td>
-        <td>0.74104</td>
-        <td>121.5268 (+1.24x)</td>
+        <td>0.745968</td>
+        <td>0.772185</td>
+        <td>100.3643 (138.46%)</td>
+    </tr>
+</table>
+
+- Community TensorFlow version is v1.15.5.
+
+### Distributed Training
+#### Test Environment
+The benchmark is performed on the Alibaba Cloud K8S cluster composed of the following ten machines.
+
+- Hardware
+  - Model name:          Intel(R) Xeon(R) Platinum 8369HC CPU @ 3.30GHz
+  - CPU(s):              8
+  - Socket(s):           1
+  - Core(s) per socket:  4
+  - Thread(s) per core:  2
+  - Memory:              32G
+
+
+#### Performance Result
+
+<table>
+    <tr>
+        <td colspan="1"></td>
+        <td>Framework</td>
+        <td>Protocol</td>
+        <td>DType</td>
+        <td>Globalsetp/Sec</td>
+    </tr>
+    <tr>
+        <td rowspan="3">WDL</td>
+        <td>Community TensorFlow</td>
+        <td>GRPC</td>
+        <td>FP32</td>
+        <td>473.447 (baseline)</td>
+    </tr>
+    <tr>
+        <td>DeepRec w/ oneDNN</td>
+        <td>GRPC</td>
+        <td>FP32</td>
+        <td>520.595 (109.96%)</td>
+    </tr>
+    <tr>
+        <td>DeepRec w/ oneDNN</td>
+        <td>GRPC</td>
+        <td>FP32+BF16</td>
+        <td>541.214 (114.31%)</td>
     </tr>
 </table>
 

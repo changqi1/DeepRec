@@ -9,6 +9,9 @@
     - [Stand-alone Training](#stand-alone-training-1)
       - [Test Environment](#test-environment)
       - [Performance Result](#performance-result)
+    - [Distributed Training](#distributed-training)
+      - [Test Environment](#test-environment-1)
+      - [Performance Result](#performance-result-1)
   - [Dataset](#dataset)
     - [Prepare](#prepare)
     - [Fields](#fields)
@@ -143,27 +146,75 @@ The benchmark is performed on the [Alibaba Cloud ECS general purpose instance fa
         <td rowspan="3">WDL</td>
         <td>Community TensorFlow</td>
         <td>FP32</td>
-        <td>0.7671165</td>
-        <td>0.7502928</td>
-        <td>31.1121 (baseline)</td>
+        <td>0.745968</td>
+        <td>0.775116</td>
+        <td>31.1354 (baseline)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32</td>
-        <td>0.7664720</td>
-        <td>0.7505082</td>
-        <td>31.1755 (+1.00x)</td>
+        <td>0.745968</td>
+        <td>0.775528</td>
+        <td>33.3026 (106.96%)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32+BF16</td>
-        <td>0.7690585</td>
-        <td>0.7568862</td>
-        <td>44.3273 (+1.42x)</td>
+        <td>0.745968</td>
+        <td>0.776024</td>
+        <td>46.7992 (150.31%)</td>
     </tr>
 </table>
 
 - Community TensorFlow version is v1.15.5.
+
+
+### Distributed Training
+#### Test Environment
+The benchmark is performed on the Alibaba Cloud K8S cluster composed of the following ten machines.
+
+- Hardware 
+  - Model name:          Intel(R) Xeon(R) Platinum 8369HC CPU @ 3.30GHz
+  - CPU(s):              8
+  - Socket(s):           1
+  - Core(s) per socket:  4
+  - Thread(s) per core:  2
+  - Memory:              32G
+
+
+#### Performance Result  
+
+<table>
+    <tr>
+        <td colspan="1"></td>
+        <td>Framework</td>
+        <td>Protocol</td>
+        <td>DType</td>
+        <td>Globalsetp/Sec</td>
+    </tr>
+    <tr>
+        <td rowspan="3">WDL</td>
+        <td>Community TensorFlow</td>
+        <td>GRPC</td>
+        <td>FP32</td>
+        <td>136.687 (baseline)</td>
+    </tr>
+    <tr>
+        <td>DeepRec w/ oneDNN</td>
+        <td>GRPC</td>
+        <td>FP32</td>
+        <td>174.294 (127.51%)</td>
+    </tr>
+    <tr>
+        <td>DeepRec w/ oneDNN</td>
+        <td>GRPC</td>
+        <td>FP32+BF16</td>
+        <td>199.432 (145.90%)</td>
+    </tr>
+</table>
+
+- Community TensorFlow version is v1.15.5.
+
 
 ## Dataset
 Train & eval dataset using ***Kaggle Display Advertising Challenge Dataset (Criteo Dataset)***.

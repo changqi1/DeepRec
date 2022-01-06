@@ -83,30 +83,30 @@ The benchmark is performed on the [Alibaba Cloud ECS general purpose instance fa
         <td>Globalsetp/Sec</td>
     </tr>
     <tr>
-        <td rowspan="3">DLRM</td>
+        <td rowspan="3">DIN</td>
         <td>Community TensorFlow</td>
         <td>FP32</td>
-        <td></td>
-        <td></td>
-        <td></td>
+        <td>0.710500</td>
+        <td>0.788700</td>
+        <td>16.5075 (baseline)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32</td>
-        <td></td>
-        <td></td>
-        <td></td>
+        <td>0.713400</td>
+        <td>0.791300</td>
+        <td>18.2626 (110.63%)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32+BF16</td>
-        <td></td>
-        <td></td>
-        <td></td>
+        <td>0.736400</td>
+        <td>0.655800</td>
+        <td>17.8228 (107.97%)</td>
     </tr>
 </table>
 
-- Community TensorFlow version is v1.15.
+- Community TensorFlow version is v1.15.5
 
 ## Dataset
 Amazon Dataset Books dataset is used as benchmark dataset.
@@ -118,7 +118,7 @@ For details of Data download, see [Data Preparation](data/README.md)
 - cat_voc.pkl: Contain a list of book categories.
 - mid_voc.pkl: Contain a list of item id(book id).
 - uid_voc.pkl: Contain a list of user id.
-- reviews-info: Contain a list of user's review.  
+- reviews-info: Contain a list of user's review, it will be used to create negative samples for user's each history.
 Each piece of data is as: `<user id>  <item id> <rating score> <timestamp>`
 - item-info: Contain mapping relationship between item id and categories.  
 `<item id>  <categories>`

@@ -9,6 +9,9 @@
     - [Stand-alone Training](#stand-alone-training-1)
       - [Test Environment](#test-environment)
       - [Performance Result](#performance-result)
+    - [Distributed Training](#distributed-training)
+      - [Test Environment](#test-environment-1)
+      - [Performance Result](#performance-result-1)
   - [Dataset](#dataset)
     - [Prepare](#prepare)
     - [Fields](#fields)
@@ -128,30 +131,77 @@ The benchmark is performed on the [Alibaba Cloud ECS general purpose instance fa
         <td>Globalsetp/Sec</td>
     </tr>
     <tr>
-        <td rowspan="3">DLRM</td>
+        <td rowspan="3">WDL</td>
         <td>Community TensorFlow</td>
         <td>FP32</td>
-        <td></td>
-        <td></td>
-        <td></td>
+        <td>0.946700</td>
+        <td>0.485867</td>
+        <td>16.4209 (baseline)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32</td>
-        <td></td>
-        <td></td>
-        <td></td>
+        <td>0.946700</td>
+        <td>0.507603</td>
+        <td>19.0956 (116.29%)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32+BF16</td>
-        <td></td>
-        <td></td>
-        <td></td>
+        <td>0.946700</td>
+        <td>0.497152</td>
+        <td>19.8531 (120.90%)</td>
     </tr>
 </table>
 
 - Community TensorFlow version is v1.15.
+- Because the dataset used is too small, the accuracy and auc of DSSM model have no reference value.
+
+### Distributed Training
+#### Test Environment
+The benchmark is performed on the Alibaba Cloud K8S cluster composed of the following ten machines.
+
+- Hardware 
+  - Model name:          Intel(R) Xeon(R) Platinum 8369HC CPU @ 3.30GHz
+  - CPU(s):              8
+  - Socket(s):           1
+  - Core(s) per socket:  4
+  - Thread(s) per core:  2
+  - Memory:              32G
+
+
+#### Performance Result  
+
+<table>
+    <tr>
+        <td colspan="1"></td>
+        <td>Framework</td>
+        <td>Protocol</td>
+        <td>DType</td>
+        <td>Globalsetp/Sec</td>
+    </tr>
+    <tr>
+        <td rowspan="3">WDL</td>
+        <td>Community TensorFlow</td>
+        <td>GRPC</td>
+        <td>FP32</td>
+        <td>114.544 (baseline)</td>
+    </tr>
+    <tr>
+        <td>DeepRec w/ oneDNN</td>
+        <td>GRPC</td>
+        <td>FP32</td>
+        <td>118.648 (103.58%)</td>
+    </tr>
+    <tr>
+        <td>DeepRec w/ oneDNN</td>
+        <td>GRPC</td>
+        <td>FP32+BF16</td>
+        <td>124.084 (108.33%)</td>
+    </tr>
+</table>
+
+- Community TensorFlow version is v1.15.5.
 
 ## Dataset
 Taobao dataset from [EasyRec](https://github.com/AlibabaPAI/EasyRec) is used.
