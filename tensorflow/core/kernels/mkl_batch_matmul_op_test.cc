@@ -57,11 +57,12 @@ namespace MKLBatchMatmulTestDefs {
     > BatchMatmulTestParams;
     std::vector<DataType> dataTypes {
         DataType::DT_FLOAT,
-        DataType::DT_BFLOAT16
+//        DataType::DT_BFLOAT16
     };
-    std::vector<std::vector<long long int>> SIZES_3D_0 = {{32, 1, 48}}; //, {1, 32, 48}, {48, 32, 1}, {50, 50, 16}, {48, 1, 32}, {1, 48, 32}};
-    std::vector<std::vector<long long int>> SIZES_3D_1 = {{32, 24, 1}}; //, {1, 16, 32}, {48, 24, 32}, {50, 24, 50}, {48, 16, 1}, {1, 24, 48}};
-    std::vector<std::vector<bool>> ADJ = {{false, true}, {false, false}};
+    std::vector<std::vector<long long int>> SIZES_3D_0 = {{32, 32, 32}}; //, {1, 32, 48}, {48, 32, 1}, {50, 50, 16}, {48, 1, 32}, {1, 48, 32}};
+    std::vector<std::vector<long long int>> SIZES_3D_1 = {{32, 32, 32}}; //, {1, 16, 32}, {48, 24, 32}, {50, 24, 50}, {48, 16, 1}, {1, 24, 48}};
+    std::vector<std::vector<bool>> NO_ADJ = {{false, false}};
+    std::vector<std::vector<bool>> ADJ = {{false, false}, {true, false}, {false, true}};
 } // namespace MKLBatchMatmulTestDefs
 
 using namespace MKLBatchMatmulTestDefs;
@@ -107,9 +108,9 @@ class BatchMatmulTestBase :
           RunAndFetch(root, last_op, &default_values);
     };
 
-    void runMkl() {
-    TF_EXPECT_OK(
-          NodeDefBuilder("mkl_batch_matmul_op", "_MklBatchMatMul") //build node
+    void runMkl(bool useV2) {
+	TF_EXPECT_OK(
+          NodeDefBuilder("mkl_batch_matmul_op", useV2 ?  "_MklBatchMatMul" : "_MklBatchMatMulV2") //build node
               .Input(FakeInput(input_type))
               .Input(FakeInput(input_type))
               .Attr("adj_x", adj_x)
@@ -131,6 +132,8 @@ class BatchMatmulTestBase :
       }
       TF_EXPECT_OK(RunOpKernel()); //Run the node computation
       mkl_values = *GetOutput(0); //Get outp
+      string v2 = useV2 ? "TESTING BatchMatMulV2" : "TESTING BatchMatMul";
+      std::cout << v2  << std::endl;
     }
  public:
     static std::string getTestCaseName(::testing::TestParamInfo<BatchMatmulTestParams> obj) {
@@ -151,14 +154,18 @@ class BatchMatmulTestBase :
             default:
                 result << "UNRECOGNISED_TYPE";
         }
-        /*result << "_Sizes_0";
+        result << "_Sizes_0";
         for (auto &x : input_size_0) {
             result << "_" << x;
         }
         result << "_Sizes_1";
         for (auto &x : input_size_1) {
             result << "_" << x;
-        }*/
+        }
+	result << "_Adj_0";
+	for (int x = 0; x < adj.size(); x++ ){
+	   adj[x] ? result << "_" << "true" : result << "_" << "false";
+	}
         return result.str();
     }
 
@@ -174,7 +181,11 @@ class BatchMatmulTestBase :
             case DT_BFLOAT16:
                 input_0.flat<bfloat16>() = input_0.flat<bfloat16>().template setRandom<Eigen::internal::NormalRandomGenerator<bfloat16>>(); // input_0
                 input_1.flat<bfloat16>() = input_1.flat<bfloat16>().template setRandom<Eigen::internal::NormalRandomGenerator<bfloat16>>(); // input_1
-                break;
+                input_0.flat<bfloat16>() = input_0.flat<bfloat16>() - input_0.flat<bfloat16>().constant((bfloat16)0.5);
+		input_0.flat<bfloat16>() = input_0.flat<bfloat16>() * input_0.flat<bfloat16>().constant((bfloat16)200.0);
+		input_1.flat<bfloat16>() = input_1.flat<bfloat16>() - input_1.flat<bfloat16>().constant((bfloat16)0.5);
+		input_1.flat<bfloat16>() = input_1.flat<bfloat16>() * input_1.flat<bfloat16>().constant((bfloat16)200.0);
+		break;
             default:
                 GTEST_FAIL() << "Unexpected DataType";
         }
@@ -182,9 +193,9 @@ class BatchMatmulTestBase :
         adj_y = adj[1];
     }
 
-    void Run() {
+    void Run(bool useV2) {
         runDefault();
-        runMkl();
+        runMkl(useV2);
     }
 
     void Validate() {
@@ -196,21 +207,25 @@ class BatchMatmulTestBase :
 
 TEST_P(BatchMatmulTestBase, CompareWithRefs) {
     SetUp();
-    std::cout << "SetUp OK" << std::endl;
-    Run();
-    std::cout << "Run OK" << std::endl;
+    Run(true);
     Validate();
-    std::cout << "Validate OK" << std::endl;
 };
 
-INSTANTIATE_TEST_CASE_P(BatchMatmul3D, BatchMatmulTestBase,
+INSTANTIATE_TEST_CASE_P(BatchMatmul3D_NoAdj, BatchMatmulTestBase,
+    ::testing::Combine(
+        ::testing::ValuesIn(dataTypes),
+        ::testing::ValuesIn(SIZES_3D_0),
+        ::testing::ValuesIn(SIZES_3D_1),
+        ::testing::ValuesIn(NO_ADJ)),
+    BatchMatmulTestBase::getTestCaseName);
+/*
+INSTANTIATE_TEST_CASE_P(BatchMatmul3D_Adj, BatchMatmulTestBase,
     ::testing::Combine(
         ::testing::ValuesIn(dataTypes),
         ::testing::ValuesIn(SIZES_3D_0),
         ::testing::ValuesIn(SIZES_3D_1),
         ::testing::ValuesIn(ADJ)),
-    BatchMatmulTestBase::getTestCaseName);
-
+    BatchMatmulTestBase::getTestCaseName); */
 //----------------------------------------------------------------------------//
 // Performance benchmarks are below.                                          //
 //----------------------------------------------------------------------------//
