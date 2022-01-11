@@ -1218,13 +1218,13 @@ inline Status CreateBlockedMemDescHelper(const memory::dims& dim,
                                        input_strides);
     delete[] input_dims;
     delete[] input_strides;
-  } catch () {
+  } catch (mkldnn::error& e) {
     delete[] input_dims;
     delete[] input_strides;
     return Status(error::Code::INTERNAL,
                   tensorflow::strings::StrCat(
                       "Failed to create blocked memory descriptor.",
-                      "Status: ", ", message: "));
+                      "Status: ", e.status, ", message: ", e.message));
   }
   return Status::OK();
 }
