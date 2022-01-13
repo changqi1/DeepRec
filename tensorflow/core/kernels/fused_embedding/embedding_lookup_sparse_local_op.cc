@@ -118,53 +118,86 @@ namespace {
     template<typename T>
     static void row_add(std::map<T *, std::vector<T *>> &mapSet, int64 row_nums) {
 
+      for (auto it = mapSet.begin(); it != mapSet.end(); ++it){
+        T * dst = it->first;
+        std::vector<T *> srcs(std::move(it->second));
+        int64 src_size = srcs.size();
+
+        for (int row = 0; row < row_nums; ++row){
+          dst[row] = 0.0;
+          for (int index = 0; index < src_size; ++index) {
+            dst[row] += srcs[index][row];
+          }
+        }
+      }
+    }
+
+    template<typename T>
+    static void row_add_mean(std::map<T *, std::vector<T *>> &mapSet, int64 row_nums, bool is_mean) {
+
 #define L(n) srcs[index + n][row]
 
       for (auto it = mapSet.begin(); it != mapSet.end(); ++it){
         T * dst = it->first;
         std::vector<T *> srcs(std::move(it->second));
         int64 src_size = srcs.size();
+
+        if (src_size==1){
+          for (int row = 0; row < row_nums; ++row){
+            dst[row] = srcs[0][row];
+          }
+          continue;
+        }
+
         float sum_tmp = 0.0;
         int64 index = 0;
         int64 r = (src_size) % 8;
+        int64 m = 1;
+        if (src_size < 10 && is_mean) m = src_size;
 
         for (int row = 0; row < row_nums; ++row){
           sum_tmp = 0.0;
           index = 0;
           dst[row] = 0.0;
           switch (r) {
-            case 1: {
-              dst[row] = L(0);
-              break;
-            }
             case 2: {
-              sum_tmp = L(0) + L(1);
+              sum_tmp = (L(0) + L(1)) / m;
               dst[row] = sum_tmp;
               break;
             }
             case 3: {
-              sum_tmp = L(0) + L(1) + L(2);
+              sum_tmp = (L(0) + L(1) + L(2)) / m;
               dst[row] = sum_tmp;
               break;
             }
             case 4: {
-              sum_tmp = L(0) + L(1) + L(2) + L(3);
+              sum_tmp = (L(0) + L(1) + L(2) + L(3)) / m;
               dst[row] = sum_tmp;
               break;
             }
             case 5: {
-              sum_tmp = L(0) + L(1) + L(2) + L(3) + L(4);
+              sum_tmp = (L(0) + L(1) + L(2) + L(3) + L(4)) / m;
               dst[row] = sum_tmp;
               break;
             }
             case 6: {
-              sum_tmp = L(0) + L(1) + L(2) + L(3) + L(4) + L(5);
+              sum_tmp = (L(0) + L(1) + L(2) + L(3) + L(4) + L(5)) / m;
               dst[row] = sum_tmp;
               break;
             }
             case 7: {
-              sum_tmp = L(0) + L(1) + L(2) + L(3) + L(4) + L(5) + L(6);
+              sum_tmp = (L(0) + L(1) + L(2) + L(3) + L(4) + L(5) + L(6)) / m;
               dst[row] = sum_tmp;
+              break;
+            }
+            case 0: {
+              dst[row] = (L(0) + L(1) + L(2) + L(3) + L(4) + L(5) + L(6) + L(7)) / m;
+              index += 8;
+              break;
+            }
+            case 1: {
+              dst[row] = (L(0) + L(1) + L(2) + L(3) + L(4) + L(5) + L(6) + L(7) + L(8)) / m;
+              index += 8;
               break;
             }
           }
@@ -172,6 +205,7 @@ namespace {
             sum_tmp = L(0) + L(1) + L(2) + L(3) + L(4) + L(5) + L(6) + L(7);
             dst[row] += sum_tmp;
           }
+          if (src_size >= 10 && is_mean) dst[row] /= src_size;
         }
       }
     }
@@ -212,14 +246,15 @@ namespace {
         mapSet[&output[index]].push_back(&embedding_table[id * embedding_size]);
       }
 
-      row_add(mapSet, embedding_size);
+      // row_add(mapSet, embedding_size);
+      row_add_mean(mapSet, embedding_size, is_mean);
 
       for (int i = 0; i < rows; ++i) {
         if (row_values[i] == 0) {
           memset(&output[i * embedding_size], 0, embedding_size * sizeof(float));
-        } else if (is_mean && row_values[i] > 1) {
-          float factor = 1.0f / row_values[i];
-          myscale(&output[i * embedding_size], factor, embedding_size);
+        // } else if (is_mean && row_values[i] > 1) {
+        //   float factor = 1.0f / row_values[i];
+        //   myscale(&output[i * embedding_size], factor, embedding_size);
         }
       }
       delete[] row_values;
@@ -593,7 +628,10 @@ public:
     Tensor* output_tensor = NULL;
     TensorShape output_shape({unique_value.size(), embedding_col});
     OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output_tensor));
+    output_tensor->flat<T>().setZero();
     T *output = (T *)output_tensor->tensor_data().data();
+    
+    memset(output, 0, embedding_col * sizeof(float) * unique_value.size());
 
     Tensor* unique_tensor = NULL;
     TensorShape unique_shape({unique_value.size()});
@@ -619,13 +657,14 @@ public:
     }
     else if (operation_ == SparseSegmentReductionOperation::kSum) {
       uint64 rows = unique_indices.size();
-      std::vector<int64> row_values(unique_value.size(), 0);
+      // std::vector<int64> row_values(unique_value.size(), 0);
       std::map<float *, std::vector<float *>> mapSet;
+
       for (int64 i = 0; i < rows; ++i) {
-        row_values[unique_indices[i]] += 1;
+        // row_values[unique_indices[i]] += 1;
 
         auto index = unique_indices[i] * embedding_col;
-
+        // memset(&output[index * embedding_col], 0, embedding_col * sizeof(float));
         if (!mapSet.count(&output[index])){
           std::vector<float *> srcs;
           mapSet[&output[index]] = srcs;
@@ -633,7 +672,18 @@ public:
         mapSet[&output[index]].push_back(&gradients[input_indices[i] * embedding_col]);
 
       }
+
       row_add(mapSet, embedding_col);
+      // printf("******Goto row_add_mean func.******\n");
+      // row_add_mean(mapSet, embedding_col, false);
+      
+      // for (int i = 0; i < unique_value.size(); ++i) {
+      //   if (row_values[i] == 0) {
+      //     memset(&output[i * embedding_col], 0, embedding_col * sizeof(float));
+      //   }
+      // }
+      // delete[] row_values;
+
     }
     else if (operation_ == SparseSegmentReductionOperation::kSqrtN) {
 

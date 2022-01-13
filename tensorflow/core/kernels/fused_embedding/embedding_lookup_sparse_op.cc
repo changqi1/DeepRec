@@ -133,7 +133,13 @@ namespace {
           dst[row] = 0.0;
           switch (r) {
             case 1: {
-              dst[row] = L(0);
+              if (src_size==1){
+                dst[row] = L(0);
+              }
+              else{
+                dst[row] = L(0) + L(1) + L(2) + L(3) + L(4) + L(5) + L(6) + L(7) + L(8);
+                index += 8;
+              }
               break;
             }
             case 2: {
