@@ -121,7 +121,6 @@ namespace {
 
       for (auto it = mapSet.begin(); it != mapSet.end(); ++it){
         T * dst = it->first;
-        memset(dst, 0, row_nums * sizeof(T));
         std::vector<T *> srcs(std::move(it->second));
         int64 src_size = srcs.size();
         float sum_tmp = 0.0;
@@ -131,6 +130,7 @@ namespace {
         for (int row = 0; row < row_nums; ++row){
           sum_tmp = 0.0;
           index = 0;
+          dst[row] = 0.0;
           switch (r) {
             case 1: {
               dst[row] = L(0);

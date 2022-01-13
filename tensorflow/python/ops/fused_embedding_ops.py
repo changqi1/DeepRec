@@ -10,11 +10,12 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.framework import sparse_tensor
 from tensorflow.python.ops import gen_fused_embedding_ops
 from tensorflow.python.ops.kv_variable_ops import EmbeddingVariable
-from tensorflow.python.ops.gen_fused_embedding_ops import fused_safe_embedding_lookup_sparse
 from tensorflow.python.ops.gen_fused_embedding_ops import fused_safe_embedding_lookup_sparse_grad
 from tensorflow.python.ops.gen_fused_embedding_ops import fused_embedding_sparse_pre_look_up
 from tensorflow.python.ops.gen_fused_embedding_ops import fused_embedding_sparse_post_look_up
-from tensorflow.python.ops.gen_fused_embedding_ops import fused_embedding_sparse_post_look_up_grad
+
+from tensorflow.python.ops.gen_fused_embedding_ops import fused_safe_embedding_lookup_sparse_local
+from tensorflow.python.ops.gen_fused_embedding_ops import fused_safe_embedding_lookup_sparse_local_grad
 from tensorflow.python.util.tf_export import tf_export
 
 
@@ -100,7 +101,7 @@ def fused_embedding_sparse_post_look_up_grad(op, top_grad_emb_vec, _):
   return grad_shards + [None for _ in range(0, 2 * num_partitions + 2)]
 
 
-@ops.RegisterGradient("FusedSafeEmbeddingLookupSparse")
+@ops.RegisterGradient("FusedSafeEmbeddingLookupSparseLocal")
 def _embedding_grad(op, grad):
-    grad, unique_value = fused_safe_embedding_lookup_sparse_grad(gradients=grad, input=op.inputs[1], dense_shape=op.inputs[2], indices=op.inputs[3], combiner=op.get_attr("combiner"))
+    grad, unique_value = fused_safe_embedding_lookup_sparse_local_grad(gradients=grad, input=op.inputs[1], dense_shape=op.inputs[2], indices=op.inputs[3], combiner=op.get_attr("combiner"))
     return [ops.IndexedSlices(grad, unique_value, op.inputs[2]), None, None, None, None]

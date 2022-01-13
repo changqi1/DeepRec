@@ -1458,7 +1458,7 @@ def fused_safe_embedding_lookup_sparse_cpu(embedding_weights,
 
   with ops.name_scope(name, "fused_embedding_lookup", embedding_weights +
                       [sparse_ids, sparse_weights]) as scope:
-    return fused_embedding_ops.fused_safe_embedding_lookup_sparse(
+    return fused_embedding_ops.fused_safe_embedding_lookup_sparse_local(
                                             weight=embedding_weights[0],
                                             id_input=sparse_ids.values,
                                             weight_input=-1,
@@ -1469,6 +1469,7 @@ def fused_safe_embedding_lookup_sparse_cpu(embedding_weights,
                                             max_norm=max_norm,
                                             default_id=default_id,
                                             partition_strategy=partition_strategy)
+
 
 @tf_export("nn.safe_embedding_lookup_multi_dim")
 def safe_embedding_lookup_multi_dim(embedding_weights,
