@@ -16,6 +16,7 @@ limitations under the License.
 
 #include <vector>
 #include "mkldnn.hpp"
+#include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/core/common_runtime/kernel_benchmark_testlib.h"
 #include "tensorflow/core/framework/allocator.h"
 #include "tensorflow/core/framework/op_kernel.h"
@@ -30,9 +31,249 @@ limitations under the License.
 #include "tensorflow/core/platform/prefetch.h"
 #include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/platform/test_benchmark.h"
+#include "tensorflow/core/public/session.h"
+#include "tensorflow/core/framework/fake_input.h"
 #include "tensorflow/core/util/mkl_util.h"
 
 namespace tensorflow {
+
+//----------------------------------------------------------------------------//
+// Concat Unit Tests are below.                                               //
+//----------------------------------------------------------------------------//
+
+namespace MKLConcatTestDefs {
+    typedef std::tuple<
+        string,                         // concatMklOp
+        DataType,                       // input_type
+        long long int,                  // num_input
+        std::vector<long long int>,     // sizes
+        long long int                   // axis
+    > ConcatTestParams;
+    std::vector<DataType> dataTypes {
+        DataType::DT_FLOAT,
+        DataType::DT_BFLOAT16
+    };
+    std::vector<string> concatMklOp = {"_MklConcat", "_MklConcatV2"};
+    std::vector<long long int> numInputs = {2, 4};
+    std::vector<long long int> AXIS_2D = {0, 1};
+    std::vector<long long int> AXIS_3D = {0, 1, 2};
+    std::vector<long long int> AXIS_4D = {0, 1, 2, 3};
+    std::vector<std::vector<long long int>> SIZES_2D = {{64, 64}, {1, 1}, {32, 21}};
+    std::vector<std::vector<long long int>> SIZES_3D = {{32, 16, 1}, {128, 128, 128}, {1, 1, 1}};
+    std::vector<std::vector<long long int>> SIZES_4D = {{32, 32, 32, 32}, {16, 1, 1, 1}, {31, 63, 15, 7}};
+} // namespace MKLConcatTestDefs
+
+using namespace MKLConcatTestDefs;
+class ConcatTestBase :
+    public ::testing::WithParamInterface<MKLConcatTestDefs::ConcatTestParams>,
+    public OpsTestBase {
+ private:
+    // Test definition (straight from Params, filled in SetUp)
+    string concat_MklOp;
+    DataType input_type;
+    long long int num_inputs;
+    std::vector<long long int> input_size;
+    long long int ax;
+    // Test input Tensors (filled in SetUp)
+    std::vector<Tensor> inputs;
+    Tensor zeros;
+    Tensor axis;
+    // Test output Tensors (filled in Run method)
+    Tensor mkl_values;
+    Tensor default_values;
+
+    static void RunAndFetch(const tensorflow::Scope& root, const string& fetch,
+                          Tensor* output) {
+    tensorflow::GraphDef graph;
+    TF_ASSERT_OK(root.ToGraphDef(&graph));
+    std::unique_ptr<tensorflow::Session> session(
+        tensorflow::NewSession(tensorflow::SessionOptions()));
+    TF_ASSERT_OK(session->Create(graph));
+    std::vector<Tensor> unfused_tensors;
+    TF_ASSERT_OK(session->Run({}, {fetch}, {}, &unfused_tensors));
+    *output = unfused_tensors[0];
+    }
+
+    void runDefault() {
+        auto root = tensorflow::Scope::NewRootScope();
+        std::vector<Input> in_values;
+        for (int i = 0; i < num_inputs; ++i) {
+            const string input_name = absl::StrCat("input_", i);
+            auto tmp = ops::Const(root.WithOpName(input_name), Input::Initializer(inputs[i]));
+            in_values.push_back(tmp);
+        }
+        auto a = ops::Const(root.WithOpName("axis"), ax);
+        Output next_op = ops::Concat(root.WithOpName("concat"), absl::Span<const Input>(in_values), a);
+        string last_op = "concat";
+        RunAndFetch(root, last_op, &default_values);
+    };
+
+    void runMkl() {
+        if (concat_MklOp == "_MklConcat") {
+            TF_EXPECT_OK(
+                NodeDefBuilder("mkl_concat_op", "_MklConcat") //build node
+                    .Attr("N", num_inputs)
+                    .Input(FakeInput(DT_INT32))
+                    .Input(FakeInput(input_type))
+                    .Input(FakeInput(DT_UINT8))
+                    .Input(FakeInput(DT_UINT8))
+                    .Attr("_kernel", "MklLayoutDependentOp")
+                    .Finalize(node_def()));
+        } else if (concat_MklOp == "_MklConcatV2") {
+            TF_EXPECT_OK(
+                NodeDefBuilder("mkl_concat_op", "_MklConcatV2") //build node
+                    .Attr("N", num_inputs)
+                    .Input(FakeInput(input_type))
+                    .Input(FakeInput(DT_INT32))
+                    .Input(FakeInput(DT_UINT8))
+                    .Input(FakeInput(DT_UINT8))
+                    .Attr("_kernel", "MklLayoutDependentOp")
+                    .Finalize(node_def()));
+        } else {
+            GTEST_FAIL() << "Incorrect Op";
+        }
+        TF_EXPECT_OK(InitOp()); //initial
+
+        if (concat_MklOp == "_MklConcat") {
+            AddInputFromArray<int32>(axis.shape(), axis.flat<int32>()); // axis
+        }
+
+        for (uint i = 0; i < num_inputs; ++i){
+            switch(input_type) {
+                case DT_FLOAT:
+                    AddInputFromArray<float>(inputs[i].shape(), inputs[i].flat<float>()); // input
+                    break;
+                case DT_BFLOAT16:
+                    AddInputFromArray<Eigen::bfloat16>(inputs[i].shape(), inputs[i].flat<Eigen::bfloat16>()); // input
+                    break;
+                default:
+                    GTEST_FAIL() << "Unexpected DataType";
+            }
+        }
+
+        if (concat_MklOp == "_MklConcatV2") {
+            AddInputFromArray<int32>(axis.shape(), axis.flat<int32>()); // axis
+        }
+
+        for (uint i = 0; i < num_inputs; ++i){
+            AddInputFromArray<uint8_t>(zeros.shape(), zeros.flat<uint8_t>()); // mkl
+        }
+        AddInputFromArray<uint8_t>(zeros.shape(), zeros.flat<uint8_t>()); // mkl
+
+        TF_EXPECT_OK(RunOpKernel()); //Run the node computation
+        mkl_values = *GetOutput(0); //Get output
+    }
+
+ public:
+    static std::string getTestCaseName(::testing::TestParamInfo<ConcatTestParams> obj) {
+        string concat_MklOp;
+        DataType input_type;
+        long long int num_inputs;
+        std::vector<long long int> input_size;
+        long long int ax;
+        std::tie(concat_MklOp, input_type, num_inputs, input_size, ax) = obj.param;
+        std::ostringstream result;
+        result << "Concat_" << concat_MklOp << "_Type_";
+        switch(input_type) {
+            case DataType::DT_FLOAT:
+                result << "FLOAT";
+                break;
+            case DataType::DT_BFLOAT16:
+                result << "BFLOAT16";
+                break;
+            default:
+                result << "UNRECOGNISED_TYPE";
+        }
+
+        result << "_NumInputs_" << num_inputs;
+
+        result << "_InputSizes";
+        for (auto &x : input_size) {
+            result << "_" << x;
+        }
+
+        result << "_Axis_" << ax;
+        return result.str();
+    }
+
+    void SetUp() {
+        std::tie(concat_MklOp, input_type, num_inputs, input_size, ax) = this->GetParam();
+        inputs = {};
+        for (uint i = 0; i < num_inputs; ++i){
+            Tensor input = Tensor(input_type, TensorShape(tensorflow::gtl::ArraySlice<long long int>(input_size.data(), input_size.size())));
+            switch(input_type) {
+                case DT_FLOAT:
+                    input.flat<float>() = input.flat<float>().template setRandom<Eigen::internal::NormalRandomGenerator<float>>(); // input
+                    break;
+                case DT_BFLOAT16:
+                    input.flat<Eigen::bfloat16>() = input.flat<Eigen::bfloat16>().template setRandom<Eigen::internal::UniformRandomGenerator<Eigen::bfloat16>>(); // input
+		            input.flat<Eigen::bfloat16>() = input.flat<Eigen::bfloat16>() - input.flat<Eigen::bfloat16>().constant((Eigen::bfloat16)0.5);
+		            input.flat<Eigen::bfloat16>() = input.flat<Eigen::bfloat16>() * input.flat<Eigen::bfloat16>().constant((Eigen::bfloat16)200.0);
+                    break;
+                default:
+                    GTEST_FAIL() << "Unexpected DataType";
+            }
+            inputs.push_back(input);
+        }
+        axis = Tensor((int32)ax);
+
+        zeros = Tensor(DT_UINT8, TensorShape({64, 64}));
+        auto zeros_mapped = zeros.tensor<uint8_t, 2>();
+        for(int i = 0; i < 64; i++){
+            for(int j = 0; j < 64; j++){
+                zeros_mapped(i, j) = 0;
+            }
+        }
+    }
+
+    void Run() {
+        runDefault();
+        runMkl();
+    }
+
+    void Validate() {
+        ASSERT_EQ(default_values.dtype(), mkl_values.dtype());
+        ASSERT_EQ(default_values.shape(), mkl_values.shape());
+        test::ExpectClose(default_values, mkl_values, 1e-5);
+    }
+};
+
+TEST_P(ConcatTestBase, CompareWithRefs) {
+    SetUp();
+    Run();
+    Validate();
+};
+
+INSTANTIATE_TEST_CASE_P(Concat2D, ConcatTestBase,
+    ::testing::Combine(
+        ::testing::ValuesIn(concatMklOp),
+        ::testing::ValuesIn(dataTypes),
+        ::testing::ValuesIn(numInputs),
+        ::testing::ValuesIn(SIZES_2D),
+        ::testing::ValuesIn(AXIS_2D)),
+    ConcatTestBase::getTestCaseName);
+
+INSTANTIATE_TEST_CASE_P(Concat3D, ConcatTestBase,
+    ::testing::Combine(
+        ::testing::ValuesIn(concatMklOp),
+        ::testing::ValuesIn(dataTypes),
+        ::testing::ValuesIn(numInputs),
+        ::testing::ValuesIn(SIZES_3D),
+        ::testing::ValuesIn(AXIS_3D)),
+    ConcatTestBase::getTestCaseName);
+
+INSTANTIATE_TEST_CASE_P(Concat4D, ConcatTestBase,
+    ::testing::Combine(
+        ::testing::ValuesIn(concatMklOp),
+        ::testing::ValuesIn(dataTypes),
+        ::testing::ValuesIn(numInputs),
+        ::testing::ValuesIn(SIZES_4D),
+        ::testing::ValuesIn(AXIS_3D)),
+    ConcatTestBase::getTestCaseName);
+
+//----------------------------------------------------------------------------//
+// Performance benchmarks are below.                                          //
+//----------------------------------------------------------------------------//
 
 template <typename T>
 static Graph* Concat(const string& kind, int num_inputs,
