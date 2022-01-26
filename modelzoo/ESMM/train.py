@@ -1,18 +1,17 @@
 import argparse
 import collections
+import json
 import math
 import numbers
 import os
 import tensorflow as tf
+from tensorflow.python.ops import partitioned_variables
 from tensorflow.python.client import timeline
 import time
 
 # Set to INFO for tracking training, default is WARN. ERROR for least messages
 tf.logging.set_verbosity(tf.logging.INFO)
 print("Using TensorFlow version %s" % (tf.__version__))
-
-if tf.__version__ >= '2.0':
-  tf = tf.compat.v1
 
 INPUT_COLUMN = [
     'clk', 'buy', 'pid', 'adgroup_id', 'cate_id', 'campaign_id', 'customer',
@@ -35,92 +34,74 @@ TAG_COLUMN = ['tag_category_list', 'tag_brand_list']
 INPUT_FEATURES = {
     'pid': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 10
     },
     'adgroup_id': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 100000
     },
     'cate_id': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 10000
     },
     'campaign_id': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 100000
     },
     'customer': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 100000
     },
     'brand': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 100000
     },
     'user_id': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 100000
     },
     'cms_segid': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 100
     },
     'cms_group_id': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 100
     },
     'final_gender_code': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 10
     },
     'age_level': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 10
     },
     'pvalue_level': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 10
     },
     'shopping_level': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 10
     },
     'occupation': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 10
     },
     'new_user_class_level': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 10
     },
     'tag_category_list': {
         'type': 'TagFeature',
-        'dim': 16,
         'hash_bucket_size': 100000
     },
     'tag_brand_list': {
         'type': 'TagFeature',
-        'dim': 16,
         'hash_bucket_size': 100000
     },
     'price': {
         'type': 'IdFeature',
-        'dim': 16,
         'hash_bucket_size': 50
         # 'num_buckets': 50
         # num_buckets is more consistent with easy rec's
@@ -176,7 +157,7 @@ def build_feature_cols():
                 hash_bucket_size=INPUT_FEATURES[key]['hash_bucket_size'],
                 dtype=tf.string)
         embedding_column = tf.feature_column.embedding_column(categorical_column,
-                                                              dimension=INPUT_FEATURES[key]['dim'],
+                                                              dimension=16,
                                                               combiner='mean')
         if key in USER_COLUMN:
             user_column.append(embedding_column)
@@ -200,7 +181,9 @@ class ESMM():
                  ctr_mlp=[128, 96, 64, 32, 16],
                  bf16=False,
                  learning_rate=0.1,
-                 l2_scale=1e-6):
+                 l2_scale=1e-6,
+                 input_layer_partitioner=None,
+                 dense_layer_partitioner=None):
         if not input:
             raise ValueError('Dataset is not defined.')
         if not user_column or not item_column or not combo_column:
@@ -219,19 +202,23 @@ class ESMM():
         self.__l2_regularization = self.__l2_regularizer(l2_scale) if l2_scale else None
         self.__bf16 = bf16
 
+        self.__input_layer_partitioner = input_layer_partitioner
+        self.__dense_layer_partitioner = dense_layer_partitioner
+
         self.feature = input[0]
         self.label = input[1]
 
         self.model = self.__build_model()
-        self.train_op, self.loss = self.compute_loss()
 
-        self.acc, self.acc_op = tf.metrics.accuracy(labels=self.label,
-                                                    predictions=self.model)
-        self.auc, self.auc_op = tf.metrics.auc(labels=self.label,
-                                               predictions=self.model,
-                                               num_thresholds=1000)
-        tf.summary.scalar('eval_acc', self.acc)
-        tf.summary.scalar('eval_auc', self.auc)
+        with tf.name_scope('head'):
+            self.train_op, self.loss = self.compute_loss()
+            self.acc, self.acc_op = tf.metrics.accuracy(labels=self.label,
+                                                        predictions=self.model)
+            self.auc, self.auc_op = tf.metrics.auc(labels=self.label,
+                                                   predictions=self.model,
+                                                   num_thresholds=1000)
+            tf.summary.scalar('eval_acc', self.acc)
+            tf.summary.scalar('eval_auc', self.auc)
 
     def compute_loss(self):
         bce_loss_func = tf.keras.losses.BinaryCrossentropy()
@@ -276,19 +263,27 @@ class ESMM():
         #for key in TAG_COLUMN:
         #    self.feature[key] = tf.strings.split(self.feature[key], '|')
 
-        with tf.variable_scope('user_input_layer', reuse=tf.AUTO_REUSE):
+        with tf.variable_scope('user_input_layer',
+                               partitioner=self.__input_layer_partitioner,
+                               reuse=tf.AUTO_REUSE):
             user_emb = tf.feature_column.input_layer(self.feature,
                                                      self.__user_column)
-        with tf.variable_scope('item_input_layer', reuse=tf.AUTO_REUSE):
+        with tf.variable_scope('item_input_layer',
+                               partitioner=self.__input_layer_partitioner,
+                               reuse=tf.AUTO_REUSE):
             item_emb = tf.feature_column.input_layer(self.feature,
                                                      self.__item_column)
-        with tf.variable_scope('combo_input_layer', reuse=tf.AUTO_REUSE):
+        with tf.variable_scope('combo_input_layer',
+                               partitioner=self.__input_layer_partitioner,
+                               reuse=tf.AUTO_REUSE):
             combo_emb = tf.feature_column.input_layer(self.feature,
                                                      self.__combo_column)
 
         if self.__bf16:
             user_emb = tf.cast(user_emb, dtype=tf.bfloat16)
-            with tf.variable_scope('user_mlp_layer', reuse=tf.AUTO_REUSE).keep_weights():
+            with tf.variable_scope('user_mlp_layer',
+                                   partitioner=self.__dense_layer_partitioner,
+                                   reuse=tf.AUTO_REUSE).keep_weights():
                 for layer_id, num_hidden_units in enumerate(self.__user_mlp):
                     user_emb = self.__create_dense_layer(user_emb,
                                                           num_hidden_units,
@@ -296,7 +291,9 @@ class ESMM():
                                                           f'user_mlp_{layer_id}')
             user_emb = tf.cast(user_emb, dtype=tf.float32)
         else:
-            with tf.variable_scope('user_mlp_layer', reuse=tf.AUTO_REUSE):
+            with tf.variable_scope('user_mlp_layer',
+                                   partitioner=self.__dense_layer_partitioner,
+                                   reuse=tf.AUTO_REUSE):
                 for layer_id, num_hidden_units in enumerate(self.__user_mlp):
                     user_emb = self.__create_dense_layer(user_emb,
                                                          num_hidden_units,
@@ -305,7 +302,9 @@ class ESMM():
 
         if self.__bf16:
             item_emb = tf.cast(item_emb, dtype=tf.bfloat16)
-            with tf.variable_scope('item_mlp_layer', reuse=tf.AUTO_REUSE).keep_weights():
+            with tf.variable_scope('item_mlp_layer',
+                                   partitioner=self.__dense_layer_partitioner,
+                                   reuse=tf.AUTO_REUSE).keep_weights():
                 for layer_id, num_hidden_units in enumerate(self.__item_mlp):
                     item_emb = self.__create_dense_layer(item_emb,
                                                          num_hidden_units,
@@ -313,7 +312,9 @@ class ESMM():
                                                          f'item_mlp_{layer_id}')
             item_emb = tf.cast(item_emb, dtype=tf.float32)
         else:
-            with tf.variable_scope('item_mlp_layer', reuse=tf.AUTO_REUSE):
+            with tf.variable_scope('item_mlp_layer',
+                                   partitioner=self.__dense_layer_partitioner,
+                                   reuse=tf.AUTO_REUSE):
                 for layer_id, num_hidden_units in enumerate(self.__item_mlp):
                     item_emb = self.__create_dense_layer(item_emb,
                                                          num_hidden_units,
@@ -322,7 +323,9 @@ class ESMM():
 
         if self.__bf16:
             combo_emb = tf.cast(combo_emb, dtype=tf.bfloat16)
-            with tf.variable_scope('combo_mlp_layer', reuse=tf.AUTO_REUSE).keep_weights():
+            with tf.variable_scope('combo_mlp_layer',
+                                   partitioner=self.__dense_layer_partitioner,
+                                   reuse=tf.AUTO_REUSE).keep_weights():
                 for layer_id, num_hidden_units in enumerate(self.__combo_mlp):
                     combo_emb = self.__create_dense_layer(combo_emb,
                                                           num_hidden_units,
@@ -330,7 +333,9 @@ class ESMM():
                                                           f'combo_mlp_{layer_id}')
             combo_emb = tf.cast(combo_emb, dtype=tf.float32)
         else:
-            with tf.variable_scope('combo_mlp_layer', reuse=tf.AUTO_REUSE):
+            with tf.variable_scope('combo_mlp_layer',
+                                   partitioner=self.__dense_layer_partitioner,
+                                   reuse=tf.AUTO_REUSE):
                 for layer_id, num_hidden_units in enumerate(self.__combo_mlp):
                     combo_emb = self.__create_dense_layer(combo_emb,
                                                           num_hidden_units,
@@ -348,7 +353,9 @@ class ESMM():
     def __build_cvr_model(self, net):
         if self.__bf16:
             net = tf.cast(net, dtype=tf.bfloat16)
-            with tf.variable_scope('cvr_mlp', reuse=tf.AUTO_REUSE).keep_weights():
+            with tf.variable_scope('cvr_mlp',
+                                   partitioner=self.__dense_layer_partitioner,
+                                   reuse=tf.AUTO_REUSE).keep_weights():
                 for layer_id, num_hidden_units in enumerate(self.__cvr_mlp):
                     net = self.__create_dense_layer(net,
                                                     num_hidden_units,
@@ -360,7 +367,9 @@ class ESMM():
                                                 'cvr_mlp_hiddenlayer_last')
             net = tf.cast(net, dtype=tf.float32)
         else:
-            with tf.variable_scope('cvr_mlp', reuse=tf.AUTO_REUSE):
+            with tf.variable_scope('cvr_mlp',
+                                   partitioner=self.__dense_layer_partitioner,
+                                   reuse=tf.AUTO_REUSE):
                 for layer_id, num_hidden_units in enumerate(self.__cvr_mlp):
                     net = self.__create_dense_layer(net,
                                                     num_hidden_units,
@@ -375,7 +384,9 @@ class ESMM():
     def __build_ctr_model(self, net):
         if self.__bf16:
             net = tf.cast(net, dtype=tf.bfloat16)
-            with tf.variable_scope('ctr_mlp', reuse=tf.AUTO_REUSE).keep_weights():
+            with tf.variable_scope('ctr_mlp',
+                                   partitioner=self.__dense_layer_partitioner,
+                                   reuse=tf.AUTO_REUSE).keep_weights():
                 for layer_id, num_hidden_units in enumerate(self.__ctr_mlp):
                     net = self.__create_dense_layer(net,
                                                     num_hidden_units,
@@ -387,7 +398,9 @@ class ESMM():
                                                 'ctr_mlp_hiddenlayer_last')
             net = tf.cast(net, dtype=tf.float32)
         else:
-            with tf.variable_scope('ctr_mlp', reuse=tf.AUTO_REUSE):
+            with tf.variable_scope('ctr_mlp',
+                                   partitioner=self.__dense_layer_partitioner,
+                                   reuse=tf.AUTO_REUSE):
                 for layer_id, num_hidden_units in enumerate(self.__ctr_mlp):
                     net = self.__create_dense_layer(net,
                                                     num_hidden_units,
@@ -409,7 +422,11 @@ def train(model,
           no_eval=False,
           timeline_steps=None,
           save_steps=None,
-          checkpoint_dir=None
+          checkpoint_dir=None,
+          tf_config=None,
+          server=None,
+          inter=None,
+          intra=None
           ):
     output_dir = os.path.join(output_dir, 'model_ESMM_' + str(int(time.time())))
     print(f'Saving model events to {output_dir}')
@@ -427,71 +444,101 @@ def train(model,
 
     sess_config = tf.ConfigProto()
 
-    with tf.Session(config=sess_config) as sess:
-        sess.run(tf.global_variables_initializer())
-        sess.run(tf.local_variables_initializer())
-        merged = tf.summary.merge_all()
-        writer = tf.summary.FileWriter(output_dir, sess.graph)
-        options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-        run_metadata = tf.RunMetadata()
-        saver = tf.train.Saver(tf.global_variables(), max_to_keep=keep_checkpoint_max)
+    if tf_config:
+        if inter:
+            sess_config.inter_op_parallelism_threads = inter
+        if intra:
+            sess_config.intra_op_parallelism_threads = intra
+        hooks = []
 
-        # train model
-        sess.run(train_init_op)
+        hooks.append(tf.train.StopAtStepHook(last_step=train_steps))
+        hooks.append(tf.train.LoggingTensorHook(
+                        {
+                            'steps': model.global_step,
+                            'loss': model.loss
+                        },
+                     every_n_iter=100))
 
-        start = time.perf_counter()
-        for _in in range(0, train_steps):
-            if ((save_steps and save_steps > 0 and (_in % save_steps == 0 or _in == train_steps - 1))
-                or (checkpoint_dir and not save_steps and _in == train_steps - 1)):
-                _, train_loss, events = sess.run([model.train_op, model.loss, merged])
-                writer.add_summary(events, _in)
-                checkpoint_path = saver.save(sess,
-                                             save_path=os.path.join(
-                                             checkpoint_dir,
-                                             'esmm-checkpoint'),
-                                             global_step=_in)
-                print(f'Saved checkpoint to {checkpoint_path}')
-            elif timeline_steps and timeline_steps > 0 and _in % timeline_steps == 0:
-                _, train_loss = sess.run([model.train_op, model.loss],
-                                         options=options,
-                                         run_metadata=run_metadata)
-                fetched_timeline = timeline.Timeline(run_metadata.step_stats)
-                chrome_trace = fetched_timeline.generate_chrome_trace_format()
-                print(f'Saved timeline to {output_dir}')
-                with open(os.path.join(output_dir, f'timeline-{_in}.json'), 'w') as f:
-                    f.write(chrome_trace)
-            else:
+        scaffold = tf.train.Scaffold(
+            local_init_op=tf.group(tf.global_variables_initializer(),
+                                   tf.local_variables_initializer(), train_init_op))
+
+        with tf.train.MonitoredTrainingSession(
+                master=server.target,
+                is_chief=tf_config['is_chief'],
+                checkpoint_dir=checkpoint_dir,
+                scaffold=scaffold,
+                hooks=hooks,
+                log_step_count_steps=100,
+                config=sess_config) as sess:
+            while not sess.should_stop():
                 _, train_loss = sess.run([model.train_op, model.loss])
+    else:
+        with tf.Session(config=sess_config) as sess:
+            sess.run(tf.global_variables_initializer())
+            sess.run(tf.local_variables_initializer())
+            merged = tf.summary.merge_all()
+            writer = tf.summary.FileWriter(output_dir, sess.graph)
+            options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+            run_metadata = tf.RunMetadata()
+            saver = tf.train.Saver(tf.global_variables(), max_to_keep=keep_checkpoint_max)
 
-            # print training loss and time cost
-            if (_in % 100 == 0 or _in == train_steps - 1):
-                end = time.perf_counter()
-                cost_time = end - start
-                global_step_sec = (100 if _in % 100 == 0 else train_steps -
-                                   1 % 100) / cost_time
-                print(f'global_step/sec: {global_step_sec:.4f}')
-                print(f'loss = {train_loss}, steps = {_in}, cost time = {cost_time:0.2f}s')
-                start = time.perf_counter()
+            # train model
+            sess.run(train_init_op)
 
-        # eval model
-        if not no_eval:
-            writer = tf.summary.FileWriter(os.path.join(output_dir, 'eval'))
-
-            sess.run(test_init_op)
-            for _in in range(1, test_steps + 1):
-                if (_in != test_steps):
-                    sess.run([model.acc, model.acc_op, model.auc, model.auc_op])
-                    if (_in % 1000 == 0):
-                        print(f'Evaluation complete:[{_in}/{test_steps}]')
-                else:
-                    eval_acc, _, eval_auc, _, events = sess.run([model.acc,
-                                                                 model.acc_op,
-                                                                 model.auc,
-                                                                 model.auc_op,
-                                                                 merged])
+            start = time.perf_counter()
+            for _in in range(0, train_steps):
+                if ((save_steps and save_steps > 0 and (_in % save_steps == 0 or _in == train_steps - 1))
+                    or (checkpoint_dir and not save_steps and _in == train_steps - 1)):
+                    _, train_loss, events = sess.run([model.train_op, model.loss, merged])
                     writer.add_summary(events, _in)
-                    print(f'Evaluation complete:[{_in}/{test_steps}]')
-                    print(f'ACC = {eval_acc}\nAUC = {eval_auc}')
+                    checkpoint_path = saver.save(sess,
+                                                 save_path=os.path.join(
+                                                 checkpoint_dir,
+                                                 'esmm-checkpoint'),
+                                                 global_step=_in)
+                    print(f'Saved checkpoint to {checkpoint_path}')
+                elif timeline_steps and timeline_steps > 0 and _in % timeline_steps == 0:
+                    _, train_loss = sess.run([model.train_op, model.loss],
+                                             options=options,
+                                             run_metadata=run_metadata)
+                    fetched_timeline = timeline.Timeline(run_metadata.step_stats)
+                    chrome_trace = fetched_timeline.generate_chrome_trace_format()
+                    print(f'Saved timeline to {output_dir}')
+                    with open(os.path.join(output_dir, f'timeline-{_in}.json'), 'w') as f:
+                        f.write(chrome_trace)
+                else:
+                    _, train_loss = sess.run([model.train_op, model.loss])
+
+                # print training loss and time cost
+                if (_in % 100 == 0 or _in == train_steps - 1):
+                    end = time.perf_counter()
+                    cost_time = end - start
+                    global_step_sec = (100 if _in % 100 == 0 else train_steps -
+                                       1 % 100) / cost_time
+                    print(f'global_step/sec: {global_step_sec:.4f}')
+                    print(f'loss = {train_loss}, steps = {_in}, cost time = {cost_time:0.2f}s')
+                    start = time.perf_counter()
+
+            # eval model
+            if not no_eval:
+                writer = tf.summary.FileWriter(os.path.join(output_dir, 'eval'))
+
+                sess.run(test_init_op)
+                for _in in range(1, test_steps + 1):
+                    if (_in != test_steps):
+                        sess.run([model.acc, model.acc_op, model.auc, model.auc_op])
+                        if (_in % 1000 == 0):
+                            print(f'Evaluation complete:[{_in}/{test_steps}]')
+                    else:
+                        eval_acc, _, eval_auc, _, events = sess.run([model.acc,
+                                                                     model.acc_op,
+                                                                     model.auc,
+                                                                     model.auc_op,
+                                                                     merged])
+                        writer.add_summary(events, _in)
+                        print(f'Evaluation complete:[{_in}/{test_steps}]')
+                        print(f'ACC = {eval_acc}\nAUC = {eval_auc}')
 
 def get_arg_parser():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -534,8 +581,28 @@ def get_arg_parser():
                         help='enable DeepRec BF16 in deep model',
                         action='store_true')
     parser.add_argument('--no_eval',
-                        help='not evaluate trained model by eval dataset.',
+                        help='not evaluate trained model by eval dataset',
                         action='store_true')
+    parser.add_argument("--protocol",
+                        type=str,
+                        choices=["grpc"],
+                        default="grpc")
+    parser.add_argument('--inter',
+                        help='set inter op parallelism threads',
+                        type=int,
+                        default=0)
+    parser.add_argument('--intra',
+                        help='set intra op parallelism threads',
+                        type=int,
+                        default=0)
+    parser.add_argument('--input_layer_partitioner',
+                        help='slice size of input layer partitioner. units MB',
+                        type=int,
+                        default=0)
+    parser.add_argument('--dense_layer_partitioner',
+                        help='slice size of dense layer partitioner. units KB',
+                        type=int,
+                        default=0)
     return parser
 
 if __name__ == '__main__':
@@ -576,8 +643,6 @@ if __name__ == '__main__':
         train_steps = args.steps
     test_steps = math.ceil(float(no_of_test_examples) / batch_size)
 
-    user_column, item_column, combo_column = build_feature_cols()
-
     print(f'Numbers of training dataset: {no_of_training_examples}')
     print(f'Number of epochs: {no_epochs}')
     print(f'Number of train steps: {train_steps}')
@@ -585,30 +650,131 @@ if __name__ == '__main__':
     print(f'Numbers of test dataset: {no_of_test_examples}')
     print(f'Numbers of test steps: {test_steps}')
 
-    # TODO: add TF_CONFIG info for distributed training
-    train_dataset = generate_input_data(train_file, batch_size, no_epochs, SEED)
-    test_dataset = generate_input_data(test_file, batch_size, 1, SEED)
+    TF_CONFIG = os.getenv('TF_CONFIG')
+    if TF_CONFIG:
+        print(f'Running distributed training with TF_CONFIG: {TF_CONFIG}')
 
-    iterator = tf.data.Iterator.from_structure(train_dataset.output_types,
-                                               train_dataset.output_shapes)
-    next_element = iterator.get_next()
+        tf_config = json.loads(TF_CONFIG)
+        cluster_config = tf_config.get('cluster')
+        ps_hosts = []
+        worker_hosts = []
+        chief_hosts = []
+        for key, value in cluster_config.items():
+            if "ps" == key:
+                ps_hosts = value
+            elif "worker" == key:
+                worker_hosts = value
+            elif "chief" == key:
+                chief_hosts = value
+        if chief_hosts:
+            worker_hosts = chief_hosts + worker_hosts
+        if not ps_hosts or not worker_hosts:
+            raise ValueError(f'[TF_CONFIG ERROR] Incorrect ps_hosts or incorrect worker_hosts')
 
-    model = ESMM(next_element,
-                 user_column,
-                 item_column,
-                 combo_column,
-                 bf16=args.bf16,
-                 learning_rate=args.learning_rate,
-                 l2_scale=args.l2_regularization)
+        task_config = tf_config.get('task')
+        task_type = task_config.get('type')
+        task_index = task_config.get('index') + (1 if task_type == 'worker'
+                                                 and chief_hosts else 0)
+        if task_type == 'chief':
+            task_type = 'worker'
 
-    train(model,
-          args.output_dir,
-          train_dataset,
-          test_dataset,
-          args.keep_checkpoint_max,
-          train_steps,
-          test_steps,
-          no_eval=args.no_eval,
-          timeline_steps=args.timeline,
-          save_steps=args.save_steps,
-          checkpoint_dir=args.checkpoint_dir)
+        is_chief = True if task_index == 0 else False
+        if is_chief:
+            print('This host is a chief')
+        cluster = tf.train.ClusterSpec({
+            "ps": ps_hosts,
+            "worker": worker_hosts
+        })
+        server = tf.distribute.Server(cluster,
+                                      job_name=task_type,
+                                      task_index=task_index,
+                                      protocol=args.protocol)
+
+        if task_type == 'ps':
+            server.join()
+        elif task_type == 'worker':
+            with tf.device(tf.train.replica_device_setter(
+                                worker_device=f'/job:worker/task:{task_index}',
+                                cluster=cluster)):
+                tf_config={'ps_hosts': ps_hosts,
+                           'worker_hosts': worker_hosts,
+                           'type': task_type,
+                           'index': task_index,
+                           'is_chief': is_chief}
+
+                user_column, item_column, combo_column = build_feature_cols()
+                train_dataset = generate_input_data(train_file, batch_size, no_epochs, SEED)
+                test_dataset = generate_input_data(test_file, batch_size, 1, SEED)
+
+                iterator = tf.data.Iterator.from_structure(train_dataset.output_types,
+                                                           train_dataset.output_shapes)
+                next_element = iterator.get_next()
+
+                # create variable partitioner for distributed training
+                num_ps_replicas = len(tf_config['ps_hosts']) if tf_config else 0
+                input_layer_partitioner = partitioned_variables.min_max_variable_partitioner(
+                                            max_partitions=num_ps_replicas,
+                                            min_slice_size=args.input_layer_partitioner <<
+                                                20) if args.input_layer_partitioner else None
+                dense_layer_partitioner = partitioned_variables.min_max_variable_partitioner(
+                                            max_partitions=num_ps_replicas,
+                                            min_slice_size=args.dense_layer_partitioner <<
+                                                10) if args.dense_layer_partitioner else None
+
+                model = ESMM(next_element,
+                             user_column,
+                             item_column,
+                             combo_column,
+                             bf16=args.bf16,
+                             learning_rate=args.learning_rate,
+                             l2_scale=args.l2_regularization,
+                             input_layer_partitioner=input_layer_partitioner,
+                             dense_layer_partitioner=dense_layer_partitioner)
+
+                train(model,
+                      args.output_dir,
+                      train_dataset,
+                      test_dataset,
+                      args.keep_checkpoint_max,
+                      train_steps,
+                      test_steps,
+                      no_eval=args.no_eval,
+                      timeline_steps=args.timeline,
+                      save_steps=args.save_steps,
+                      checkpoint_dir=args.checkpoint_dir,
+                      tf_config=tf_config,
+                      server=server,
+                      inter=args.inter,
+                      intra=args.intra)
+
+
+    else:
+        print('Running stand-alone mode training')
+
+        user_column, item_column, combo_column = build_feature_cols()
+        train_dataset = generate_input_data(train_file, batch_size, no_epochs, SEED)
+        test_dataset = generate_input_data(test_file, batch_size, 1, SEED)
+
+        iterator = tf.data.Iterator.from_structure(train_dataset.output_types,
+                                                   train_dataset.output_shapes)
+        next_element = iterator.get_next()
+
+        model = ESMM(next_element,
+                     user_column,
+                     item_column,
+                     combo_column,
+                     bf16=args.bf16,
+                     learning_rate=args.learning_rate,
+                     l2_scale=args.l2_regularization)
+
+        train(model,
+              args.output_dir,
+              train_dataset,
+              test_dataset,
+              args.keep_checkpoint_max,
+              train_steps,
+              test_steps,
+              no_eval=args.no_eval,
+              timeline_steps=args.timeline,
+              save_steps=args.save_steps,
+              checkpoint_dir=args.checkpoint_dir)

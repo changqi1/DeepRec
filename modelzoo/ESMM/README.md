@@ -94,15 +94,21 @@ input:
     - `--save_steps`: Set the number of steps on saving checkpoints, zero to close. Default will be set to `0`.
     - `--keep_checkpoint_max`: Maximum number of recent checkpoint to keep. Default is `1`.
     - `--bf16`: Enable DeepRec BF16 feature in DeepRec. Use FP32 by default.
-    - `--no_eval`: Do not evaluate trained model by eval dataset.
+    - `--no_eval`: Do not evaluate trained model by eval dataset. Evaluating model by default.
+    - `--protocol`: Set the protocol("grpc", "grpc++", "star_server") used when starting server in distributed training. Default is `grpc`.
     - `--inter`: Set inter op parallelism threads. Default is `0`.
     - `--intra`: Set intra op parallelism threads. Default is `0`.
-    - `--input_layer_partitioner`: Slice size of input layer partitioner(units MB).
-    - `--dense_layer_partitioner`: Slice size of dense layer partitioner(units kB).
-    - `--protocol`: Set the protocol("grpc", "grpc++", "star_server") used when starting server in distributed training. Default is `grpc`.
+    - `--input_layer_partitioner`: Slice size of input layer partitioner(units MB). Default is `0`.
+    - `--dense_layer_partitioner`: Slice size of dense layer partitioner(units kB). Default is `0`.
 
 ### Distribute Training
-How to train distribute model
+1. Prepare a K8S cluster and shared storage volume.
+2. Create a PVC(PeritetVolumeClaim) for storage volumn in cluster.
+3. Prepare docker image by DockerFile.
+4. Edit k8s yaml file
+    - `replicas`: numbers of chief, workers, ps;
+    - `image`: place where nodes can pull the docker image from;
+    - `claimName`: PVC name.
 
 
 ## Benchmark
