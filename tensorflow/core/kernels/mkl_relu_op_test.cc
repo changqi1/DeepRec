@@ -14,11 +14,14 @@ limitations under the License.
 ==============================================================================*/
 
 #ifdef INTEL_MKL
-
+#include <functional>
+#include <vector>
 #include "dnnl.hpp"
 #include "absl/strings/match.h"
 #include "tensorflow/cc/ops/const_op.h"
 #include "tensorflow/cc/ops/nn_ops.h"
+#include "tensorflow/cc/ops/array_ops.h"
+#include "tensorflow/cc/ops/array_ops_internal.h"
 #include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/core/common_runtime/kernel_benchmark_testlib.h"
 #include "tensorflow/core/framework/fake_input.h"
@@ -34,15 +37,171 @@ limitations under the License.
 #include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/platform/test_benchmark.h"
 #include "tensorflow/core/public/session.h"
+#include "tensorflow/core/framework/fake_input.h"
+#include <gtest/gtest.h>
 #include "tensorflow/core/util/mkl_util.h"
 
-// Compare performance of default Tensorflow convolution kernels (Eigen) with
-// MKL kernels on CPU.
-// Before running these benchmarks configure OpenMP environment variables:
-//   export KMP_BLOCKTIME=0
-//   export OMP_NUM_THREADS=${num_threads}
-
 namespace tensorflow {
+//----------------------------------------------------------------------------//
+// Relu Unit Tests are below.                                                 //
+//----------------------------------------------------------------------------//
+namespace MKLReluTestDefs {
+    typedef std::tuple<
+    DataType,             // input_type
+    std::vector<long long int>
+    > ReluTestParams;
+    std::vector<DataType> dataTypes {
+        DataType::DT_FLOAT,
+        DataType::DT_BFLOAT16
+    };
+    std::vector<std::vector<long long int>> SIZES_2D = {{64, 64}, {1,1}, {1,32}, {32, 21}};
+    std::vector<std::vector<long long int>> SIZES_3D = {{32, 16, 1}, {32, 32, 32}, {128, 128, 128}, {1, 1, 1}};
+    std::vector<std::vector<long long int>> SIZES_4D = {{32, 32, 32, 32}, {16, 1, 1, 1}, {31, 63, 15, 7}};
+} // namespace MKLReluTestDefs
+
+using namespace MKLReluTestDefs;
+class ReluTestBase :
+    public ::testing::WithParamInterface<MKLReluTestDefs::ReluTestParams>,
+    public OpsTestBase {
+ private:
+    // Test definition (straight from Params, filled in SetUp)
+    DataType input_type;
+    std::vector<long long int> input_size;
+    // Test input Tensors (filled in SetUp)
+    Tensor input;
+    Tensor zeros;
+    // Test output Tensors (filled in Run method)
+    Tensor mkl_values;
+    Tensor default_values;
+
+    static void RunAndFetch(const tensorflow::Scope& root, const string& fetch,
+                          Tensor* output) {
+    tensorflow::GraphDef graph;
+    TF_ASSERT_OK(root.ToGraphDef(&graph));
+    std::unique_ptr<tensorflow::Session> session(
+        tensorflow::NewSession(tensorflow::SessionOptions()));
+    TF_ASSERT_OK(session->Create(graph));
+    std::vector<Tensor> unfused_tensors;
+    TF_ASSERT_OK(session->Run({}, {fetch}, {}, &unfused_tensors));
+    *output = unfused_tensors[0];
+    }
+
+    void runDefault() {
+          auto root = tensorflow::Scope::NewRootScope();
+          auto input_op =
+              ops::Const(root.WithOpName("input"), Input::Initializer(input));
+          Output next_op = ops::Relu(root.WithOpName("relu"), input_op);
+          string last_op = "relu";
+          RunAndFetch(root, last_op, &default_values);
+    };
+
+    void runMkl() {
+    TF_EXPECT_OK(
+        NodeDefBuilder("mkl_relu_op", "_MklRelu") //build node
+            .Input(FakeInput(input_type))
+            .Input(FakeInput(DT_UINT8))
+            .Attr("_kernel", "MklLayoutDependentOp")
+            .Finalize(node_def()));
+    TF_EXPECT_OK(InitOp()); //initial
+    switch(input_type) {
+        case DT_FLOAT:
+            AddInputFromArray<float>(input.shape(), input.flat<float>()); // input
+            break;
+        case DT_BFLOAT16:
+            AddInputFromArray<bfloat16>(input.shape(), input.flat<bfloat16>()); // input
+            break;
+        default:
+            GTEST_FAIL() << "Unexpected DataType";
+    }
+    AddInputFromArray<uint8_t>(zeros.shape(), zeros.flat<uint8_t>()); // input
+    TF_EXPECT_OK(RunOpKernel()); //Run the node computation
+    mkl_values = *GetOutput(0); //Get output
+    }
+ public:
+    static std::string getTestCaseName(::testing::TestParamInfo<ReluTestParams> obj) {
+        DataType input_type;
+        std::vector<long long int> input_size;
+        std::tie(input_type, input_size) = obj.param;
+        std::ostringstream result;
+        result << "Relu_Type_";
+        switch(input_type) {
+            case DataType::DT_FLOAT:
+                result << "FLOAT";
+                break;
+            case DataType::DT_BFLOAT16:
+                result << "BFLOAT16";
+                break;
+            default:
+                result << "UNRECOGNISED_TYPE";
+        }
+        result << "_Sizes";
+        for (auto &x : input_size) {
+            result << "_" << x;
+        }
+        return result.str();
+    }
+
+    void SetUp() {
+        std::tie(input_type, input_size) = this->GetParam();
+        input = Tensor(input_type, TensorShape(tensorflow::gtl::ArraySlice<long long int>(input_size.data(), input_size.size())));
+        switch(input_type) {
+            case DT_FLOAT:
+                input.flat<float>() = input.flat<float>().template setRandom<Eigen::internal::NormalRandomGenerator<float>>(); // input
+                break;
+            case DT_BFLOAT16:
+                input.flat<bfloat16>() = input.flat<bfloat16>().template setRandom<Eigen::internal::NormalRandomGenerator<bfloat16>>(); // input
+                break;
+            default:
+                GTEST_FAIL() << "Unexpected DataType";
+        }
+        zeros = Tensor(DT_UINT8, TensorShape({64, 64}));
+        auto zeros_mapped = zeros.tensor<uint8_t, 2>();
+        for(int i = 0; i < 64; i++){
+            for(int j = 0; j < 64; j++){
+                zeros_mapped(i, j) = 0;
+            }
+        }
+    }
+
+    void Run() {
+        runDefault();
+        runMkl();
+    }
+
+    void Validate() {
+        ASSERT_EQ(default_values.dtype(), mkl_values.dtype());
+        ASSERT_EQ(default_values.shape(), mkl_values.shape());
+        test::ExpectClose(default_values, mkl_values, 1e-5);
+    }
+};
+
+TEST_P(ReluTestBase, CompareWithRefs) {
+    SetUp();
+    Run();
+    Validate();
+};
+
+INSTANTIATE_TEST_CASE_P(Relu2D, ReluTestBase,
+    ::testing::Combine(
+        ::testing::ValuesIn(dataTypes),
+        ::testing::ValuesIn(SIZES_2D)),
+    ReluTestBase::getTestCaseName);
+
+INSTANTIATE_TEST_CASE_P(Relu3D, ReluTestBase,
+    ::testing::Combine(
+        ::testing::ValuesIn(dataTypes),
+        ::testing::ValuesIn(SIZES_3D)),
+    ReluTestBase::getTestCaseName);
+
+INSTANTIATE_TEST_CASE_P(Relu4D, ReluTestBase,
+    ::testing::Combine(
+        ::testing::ValuesIn(dataTypes),
+        ::testing::ValuesIn(SIZES_4D)),
+    ReluTestBase::getTestCaseName);
+
+//----------------------------------------------------------------------------//
+// Performance benchmarks are below.                                          //
+//----------------------------------------------------------------------------//
 
 template <typename T>
 static Graph* Activation(const string& op_name, const string& kind,
@@ -130,5 +289,4 @@ TEST_Activation_ALL(LeakyRelu)
 TEST_Activation_ALL(LeakyReluGrad)
 
 }  // namespace tensorflow
-
 #endif  // INTEL_MKL
