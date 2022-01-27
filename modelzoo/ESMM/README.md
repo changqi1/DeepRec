@@ -1,6 +1,6 @@
 # ESMM
 
-- [MODEL](#model)
+- [ESMM](#ESMM)
   - [Model Structure](#model-structure)
   - [Usage](#usage)
     - [Stand-alone Training](#stand-alone-training)
