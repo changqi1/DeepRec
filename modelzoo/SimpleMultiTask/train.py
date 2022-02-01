@@ -126,9 +126,8 @@ class SimpleMultiTask():
                 self.__input_layer = tf.cast(self.__input_layer, dtype=tf.bfloat16)
 
         with tf.variable_scope('SimpleMultiTask',
-                               partitioner=self.__dense_layer_partitioner).keep_weights(dtype=tf.float32):
+                               reuse=tf.AUTO_REUSE):
             self.clk_model, self.clk_logits = self.__build_clk_model()
-
             self.buy_model, self.buy_logits = self.__build_buy_model()
 
         with tf.name_scope('head'):
@@ -193,25 +192,51 @@ class SimpleMultiTask():
         return train_op, total_loss
 
     def __build_clk_model(self):
-        d_clk = self.__input_layer
-        for layer_id, num_hidden_units in enumerate(self.__mlp):
-            d_clk = self.__create_dense_layer(d_clk, num_hidden_units, tf.nn.relu, f'd{layer_id}_clk')
+        if self.__bf16:
+            d_clk = tf.cast(self.__input_layer, dtype=tf.bfloat16)
+            with tf.variable_scope('clk_model',
+                                   partitioner=self.__dense_layer_partitioner,
+                                   reuse=tf.AUTO_REUSE).keep_weights():
+                for layer_id, num_hidden_units in enumerate(self.__mlp):
+                    d_clk = self.__create_dense_layer(d_clk, num_hidden_units, tf.nn.relu, f'd{layer_id}_clk')
 
-        d_clk = self.__create_dense_layer(d_clk, 1, None, 'output_clk')
-        if args.bf16:
-            d_clk = tf.cast(d_clk, tf.float32)
+                d_clk = self.__create_dense_layer(d_clk, 1, None, 'output_clk')
+                d_clk = tf.cast(d_clk, tf.float32)
+        else:
+            with tf.variable_scope('clk_model',
+                                   partitioner=self.__dense_layer_partitioner,
+                                   reuse=tf.AUTO_REUSE):
+                d_clk = self.__input_layer
+                for layer_id, num_hidden_units in enumerate(self.__mlp):
+                    d_clk = self.__create_dense_layer(d_clk, num_hidden_units, tf.nn.relu, f'd{layer_id}_clk')
+
+                d_clk = self.__create_dense_layer(d_clk, 1, None, 'output_clk')
         Y_clk = tf.squeeze(d_clk)
 
         return tf.math.sigmoid(d_clk), Y_clk
 
     def __build_buy_model(self):
-        d_buy = self.__input_layer
-        for layer_id, num_hidden_units in enumerate(self.__mlp):
-            d_buy = self.__create_dense_layer(d_buy, num_hidden_units, tf.nn.relu, f'd{layer_id}_buy')
+        if self.__bf16:
+            d_buy = tf.cast(self.__input_layer, dtype=tf.bfloat16)
+            with tf.variable_scope('buy_model',
+                                   partitioner=self.__dense_layer_partitioner,
+                                   reuse=tf.AUTO_REUSE).keep_weights():
+                d_buy = self.__input_layer
+                for layer_id, num_hidden_units in enumerate(self.__mlp):
+                    d_buy = self.__create_dense_layer(d_buy, num_hidden_units, tf.nn.relu, f'd{layer_id}_buy')
 
-        d_buy = self.__create_dense_layer(d_buy, 1, None, 'output_buy')
-        if args.bf16:
+                d_buy = self.__create_dense_layer(d_buy, 1, None, 'output_buy')
             d_buy = tf.cast(d_buy, tf.float32)
+        else:
+            with tf.variable_scope('buy_model',
+                                   partitioner=self.__dense_layer_partitioner,
+                                   reuse=tf.AUTO_REUSE):
+                d_buy = self.__input_layer
+                for layer_id, num_hidden_units in enumerate(self.__mlp):
+                    d_buy = self.__create_dense_layer(d_buy, num_hidden_units, tf.nn.relu, f'd{layer_id}_buy')
+
+                d_buy = self.__create_dense_layer(d_buy, 1, None, 'output_buy')
+
         Y_buy = tf.squeeze(d_buy)
 
         return tf.math.sigmoid(d_buy), Y_buy
@@ -223,7 +248,7 @@ def train(model,
           test_dataset,
           keep_checkpoint_max,
           train_steps,
-          test_steps,
+          test_steps=None,
           no_eval=False,
           timeline_steps=None,
           save_steps=None,
@@ -519,7 +544,7 @@ if __name__ == '__main__':
                       test_dataset,
                       args.keep_checkpoint_max,
                       train_steps,
-                      test_steps,
+                      test_steps if not args.no_eval else None,
                       no_eval=args.no_eval,
                       timeline_steps=args.timeline,
                       save_steps=args.save_steps,
@@ -551,7 +576,7 @@ if __name__ == '__main__':
               test_dataset,
               args.keep_checkpoint_max,
               train_steps,
-              test_steps,
+              test_steps if not args.no_eval else None,
               no_eval=args.no_eval,
               timeline_steps=args.timeline,
               save_steps=args.save_steps,

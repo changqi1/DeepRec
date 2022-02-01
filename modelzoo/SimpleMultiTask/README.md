@@ -71,10 +71,9 @@ input:
     - `--steps`: Set the number of steps on train dataset. When default(`0`) is used, the number of steps is computed based on dataset size and number of epochs equaled 10.
     - `--batch_size`: Batch size to train. Default is `512`.
     - `--output_dir`: Full path to output directory for logs and saved model. Default is `./result`.
-    - `--checkpoint`: Full path to checkpoints output directory. Default is `$(OUTPUT_DIR)/model_$(MODEL_NAME)_$(TIMESTAMP)`
-    - `--learning_rate`: Learning rate for network. Default is `0.1`.
-    - `--timeline`: Save steps of profile hooks to record timeline, zero to close, defualt to `0`.
-    - `--save_steps`: Set the number of steps on saving checkpoints, zero to close. Default will be set to `0`.
+    - `--checkpoint_dir`: Full path to checkpoints output directory. Default is `$(OUTPUT_DIR)/model_$(MODEL_NAME)_$(TIMESTAMP)`
+    - `--timeline`: Save steps of profile hooks to record timeline, zero to close, defualt is `None`.
+    - `--save_steps`: Set the number of steps on saving checkpoints, zero to close. Default will be set to `None`.
     - `--keep_checkpoint_max`: Maximum number of recent checkpoint to keep. Default is `1`.
     - `--bf16`: Enable DeepRec BF16 feature in DeepRec. Use FP32 by default.
     - `--no_eval`: Do not evaluate trained model by eval dataset. Evaluating model by default.
@@ -128,23 +127,23 @@ The benchmark is performed on the [Alibaba Cloud ECS general purpose instance fa
         <td rowspan="3">SimpleMultiTask</td>
         <td>Community TensorFlow</td>
         <td>FP32</td>
-        <td></td>
-        <td></td>
-        <td></td>
+        <td>0.97315</td>
+        <td>0.570676</td>
+        <td>38.757 (baseline)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32</td>
-        <td></td>
-        <td></td>
-        <td></td>
+        <td>0.97315</td>
+        <td>0.558207</td>
+        <td>46.016 (118.73%)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32+BF16</td>
-        <td></td>
-        <td></td>
-        <td></td>
+        <td>0.97315</td>
+        <td>0.560356</td>
+        <td>46.136 (119.04%)</td>
     </tr>
 </table>
 
@@ -197,5 +196,5 @@ Item's feature columns is as follow:
 
 ## TODO LIST
 Next To do
-- Distributed training and benchmark
+- Distributed training benchmark
 - Search for bigger dataset
