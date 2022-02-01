@@ -8,47 +8,51 @@ from tensorflow.python.client import timeline as tf_timeline
 from tensorflow.python.ops import partitioned_variables
 import time
 
-LABEL_COLUMNS = ["clk", "buy"]
+# Set to INFO for tracking training, default is WARN. ERROR for least messages
+tf.logging.set_verbosity(tf.logging.INFO)
+print(f'Using TensorFlow version {tf.__version__}')
+
+LABEL_COLUMNS = ['clk', 'buy']
 HASH_INPUTS = [
-        "pid",
-        "adgroup_id",
-        "cate_id",
-        "campaign_id",
-        "customer",
-        "brand",
-        "user_id",
-        "cms_segid",
-        "cms_group_id",
-        "final_gender_code",
-        "age_level",
-        "pvalue_level",
-        "shopping_level",
-        "occupation",
-        "new_user_class_level",
-        "tag_category_list",
-        "tag_brand_list"
+        'pid',
+        'adgroup_id',
+        'cate_id',
+        'campaign_id',
+        'customer',
+        'brand',
+        'user_id',
+        'cms_segid',
+        'cms_group_id',
+        'final_gender_code',
+        'age_level',
+        'pvalue_level',
+        'shopping_level',
+        'occupation',
+        'new_user_class_level',
+        'tag_category_list',
+        'tag_brand_list'
         ]
-IDENTITY_INPUTS = ["price"]
+IDENTITY_INPUTS = ['price']
 HASH_BUCKET_SIZES = {
-        "pid": 10,
-        "adgroup_id": 100000,
-        "cate_id": 10000,
-        "campaign_id": 100000,
-        "customer": 100000,
-        "brand": 100000,
-        "user_id": 100000,
-        "cms_segid": 100,
-        "cms_group_id": 100,
-        "final_gender_code": 10,
-        "age_level": 10,
-        "pvalue_level": 10,
-        "shopping_level": 10,
-        "occupation": 10,
-        "new_user_class_level": 10,
-        "tag_category_list": 100000,
-        "tag_brand_list": 100000
+        'pid': 10,
+        'adgroup_id': 100000,
+        'cate_id': 10000,
+        'campaign_id': 100000,
+        'customer': 100000,
+        'brand': 100000,
+        'user_id': 100000,
+        'cms_segid': 100,
+        'cms_group_id': 100,
+        'final_gender_code': 10,
+        'age_level': 10,
+        'pvalue_level': 10,
+        'shopping_level': 10,
+        'occupation': 10,
+        'new_user_class_level': 10,
+        'tag_category_list': 100000,
+        'tag_brand_list': 100000
         }
-defaults = [[0]] * len(LABEL_COLUMNS) + [[" "]] * len(HASH_INPUTS) + [[0]] * len(IDENTITY_INPUTS)
+defaults = [[0]] * len(LABEL_COLUMNS) + [[' ']] * len(HASH_INPUTS) + [[0]] * len(IDENTITY_INPUTS)
 headers = LABEL_COLUMNS + HASH_INPUTS + IDENTITY_INPUTS
 
 def build_feature_cols():
@@ -62,13 +66,13 @@ def build_feature_cols():
                         dtype=tf.string
                         ),
                     dimension=16,
-                    combiner="mean"))
+                    combiner='mean'))
 
     for i in range(len(IDENTITY_INPUTS)):
         tf.feature_column.embedding_column(
                 tf.feature_column.categorical_column_with_identity(IDENTITY_INPUTS[i], 50),
                 dimension=16,
-                combiner="mean")
+                combiner='mean')
 
     return feature_columns
 
@@ -112,7 +116,7 @@ class SimpleMultiTask():
 
         self.__feature = input[1]
         self.__label = input[0]
-        labels = tf.stack([self.__label["clk"], self.__label["buy"]], axis=1)
+        labels = tf.stack([self.__label['clk'], self.__label['buy']], axis=1)
 
         with tf.variable_scope('input_layer',
                                 partitioner=self.__input_layer_partitioner,
@@ -128,21 +132,15 @@ class SimpleMultiTask():
             self.buy_model, self.buy_logits = self.__build_buy_model()
 
         with tf.name_scope('head'):
-            # TODO: tensorflow.python.framework.errors_impl.InvalidArgumentError: From /job:ps/replica:0/task:0:
-            #       Assign requires shapes of both tensors to match. lhs shape= [1000] rhs shape= [200]
-            #       [[{{node head/auc/false_positives/Assign}}]]
             self.train_op, self.total_loss = self.__compute_loss()
             preds = tf.squeeze(tf.stack([self.clk_model, self.buy_model], axis=1), [-1])
-            print(f'Labels shape: {labels.shape}')
-            print(f'Preds shape: {preds.shape}')
             self.acc, self.acc_op = tf.metrics.accuracy(labels=labels,
-                                                        predictions=preds,
-                                                        name='acc')
+                                                        predictions=preds)
             self.auc, self.auc_op = tf.metrics.auc(labels=labels,
                                                    predictions=preds,
-                                                   name='auc')
-            tf.summary.scalar('acc', self.acc)
-            tf.summary.scalar('auc', self.auc)
+                                                   num_thresholds=1000)
+            tf.summary.scalar('eval_acc', self.acc)
+            tf.summary.scalar('eval_auc', self.auc)
 
     def __create_dense_layer(self, input, num_hidden_units, activation, layer_name):
         with tf.variable_scope(layer_name, reuse=tf.AUTO_REUSE) as mlp_layer_scope:
@@ -154,8 +152,8 @@ class SimpleMultiTask():
         return dense_layer
 
     def __compute_loss(self):
-        loss_clk = tf.losses.sigmoid_cross_entropy(multi_class_labels=self.__label["clk"], logits=self.clk_logits)
-        loss_buy = tf.losses.sigmoid_cross_entropy(multi_class_labels=self.__label["buy"], logits=self.buy_logits)
+        loss_clk = tf.losses.sigmoid_cross_entropy(multi_class_labels=self.__label['clk'], logits=self.clk_logits)
+        loss_buy = tf.losses.sigmoid_cross_entropy(multi_class_labels=self.__label['buy'], logits=self.buy_logits)
 
         total_loss = loss_buy + loss_clk
 
@@ -183,14 +181,15 @@ class SimpleMultiTask():
                               min_learning_rate,
                               name='learning_rate')
 
-        learning_rate = exponential_decay_with_burnin(tf.train.get_or_create_global_step(),
+        self.global_step = tf.train.get_or_create_global_step()
+        learning_rate = exponential_decay_with_burnin(self.global_step,
                                                       0.001,
                                                       1000,
                                                       0.5,
                                                       min_learning_rate=1e-07)
-        self.global_step = tf.train.get_or_create_global_step()
+
         train_op = tf.train.AdamOptimizer(learning_rate).minimize(total_loss, global_step=self.global_step)
-        tf.summary.scalar("loss", total_loss)
+        tf.summary.scalar('loss', total_loss)
         return train_op, total_loss
 
     def __build_clk_model(self):
@@ -326,7 +325,7 @@ def train(model,
 
             # eval model
             if not no_eval:
-                writer = tf.summary.FileWriter(os.path.join(args.output_dir, "eval"))
+                writer = tf.summary.FileWriter(os.path.join(args.output_dir, 'eval'))
                 sess.run(tf.local_variables_initializer())
                 sess.run(test_init_op)
                 for i in range(test_steps - 1):
@@ -338,43 +337,43 @@ def train(model,
 
 def parse_args():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--seed", help="set random seed", type=int, default=2021)
-    parser.add_argument("--data_location",
-                        help="Full path of train data",
-                        default="./data")
-    parser.add_argument("--steps",
-                        help="set the number of steps on train dataset",
+    parser.add_argument('--seed', help='set random seed', type=int, default=2021)
+    parser.add_argument('--data_location',
+                        help='Full path of train data',
+                        default='./data')
+    parser.add_argument('--steps',
+                        help='set the number of steps on train dataset',
                         type=int,
                         default=0)
-    parser.add_argument("--batch_size",
-                        help="Batch size to train",
+    parser.add_argument('--batch_size',
+                        help='Batch size to train',
                         type=int,
                         default=512)
-    parser.add_argument("--output_dir",
-                        help="Full path to logs & model output directory",
-                        default="./result")
+    parser.add_argument('--output_dir',
+                        help='Full path to logs & model output directory',
+                        default='./result')
     parser.add_argument('--checkpoint_dir',
                         help='Full path to checkpoints output directory')
-    parser.add_argument("--timeline",
-                        help="number of steps on saving timeline",
+    parser.add_argument('--timeline',
+                        help='number of steps on saving timeline',
                         type=int)
-    parser.add_argument("--save_steps",
-                        help="set the number of steps on saving checkpoints",
+    parser.add_argument('--save_steps',
+                        help='set the number of steps on saving checkpoints',
                         type=int)
-    parser.add_argument("--keep_checkpoint_max",
-                        help="Maximum number of recent checkpoint to keep",
+    parser.add_argument('--keep_checkpoint_max',
+                        help='Maximum number of recent checkpoint to keep',
                         type=int,
                         default=1)
-    parser.add_argument("--bf16",
-                        help="enable DeepRec BF16 in deep model",
-                        action="store_true")
-    parser.add_argument("--no_eval",
-                        help="not evaluate trained model by eval dataset.",
-                        action="store_true")
-    parser.add_argument("--protocol",
+    parser.add_argument('--bf16',
+                        help='enable DeepRec BF16 in deep model',
+                        action='store_true')
+    parser.add_argument('--no_eval',
+                        help='not evaluate trained model by eval dataset.',
+                        action='store_true')
+    parser.add_argument('--protocol',
                         type=str,
-                        choices=["grpc"],
-                        default="grpc")
+                        choices=['grpc'],
+                        default='grpc')
     parser.add_argument('--inter',
                         help='set inter op parallelism threads',
                         type=int,
@@ -446,11 +445,11 @@ if __name__ == '__main__':
         worker_hosts = []
         chief_hosts = []
         for key, value in cluster_config.items():
-            if "ps" == key:
+            if 'ps' == key:
                 ps_hosts = value
-            elif "worker" == key:
+            elif 'worker' == key:
                 worker_hosts = value
-            elif "chief" == key:
+            elif 'chief' == key:
                 chief_hosts = value
         if chief_hosts:
             worker_hosts = chief_hosts + worker_hosts
@@ -468,8 +467,8 @@ if __name__ == '__main__':
         if is_chief:
             print('This host is a chief')
         cluster = tf.train.ClusterSpec({
-            "ps": ps_hosts,
-            "worker": worker_hosts
+            'ps': ps_hosts,
+            'worker': worker_hosts
         })
         server = tf.distribute.Server(cluster,
                                       job_name=task_type,
