@@ -11,7 +11,7 @@ import time
 
 # Set to INFO for tracking training, default is WARN. ERROR for least messages
 tf.logging.set_verbosity(tf.logging.INFO)
-print("Using TensorFlow version %s" % (tf.__version__))
+print(f'Using TensorFlow version {tf.__version__}')
 
 INPUT_COLUMN = [
     'clk', 'buy', 'pid', 'adgroup_id', 'cate_id', 'campaign_id', 'customer',
@@ -117,7 +117,7 @@ def add_layer_summary(value, tag):
 def generate_input_data(filename, batch_size, num_epochs, seed):
     def parse_csv(value):
         tf.logging.info('Parsing {}'.format(filename))
-        string_defaults = [[" "] for i in range(1, 19)]
+        string_defaults = [[' '] for i in range(1, 19)]
         label_defaults = [[0], [0]]
         column_headers = INPUT_COLUMN
         record_defaults = label_defaults + string_defaults
@@ -130,16 +130,13 @@ def generate_input_data(filename, batch_size, num_epochs, seed):
         features = all_columns
         return features, label
 
-    # Extract lines from input files using the Dataset API.
-    dataset = tf.data.TextLineDataset(filename)
-    dataset = dataset.shuffle(buffer_size=10000,
-                              seed=seed)
-    dataset = dataset.repeat(num_epochs)
-    dataset = dataset.prefetch(32)
-    dataset = dataset.batch(batch_size)
-    dataset = dataset.map(parse_csv, num_parallel_calls=28)
-    dataset = dataset.prefetch(1)
-    return dataset
+    return (tf.data.TextLineDataset(filename)
+            .shuffle(buffer_size=10000, seed=seed)
+            .repeat(num_epochs)
+            .prefetch(32)
+            .batch(batch_size)
+            .map(parse_csv, num_parallel_calls=28)
+            .prefetch(1))
 
 def build_feature_cols():
     user_column = []
@@ -565,8 +562,7 @@ def get_arg_parser():
                         default=0.1)
     parser.add_argument('--l2_regularization',
                         help='L2 regularization for the model',
-                        type=float,
-                        default=None)
+                        type=float)
     parser.add_argument('--timeline',
                         help='number of steps on saving timeline',
                         type=int)
@@ -583,10 +579,10 @@ def get_arg_parser():
     parser.add_argument('--no_eval',
                         help='not evaluate trained model by eval dataset',
                         action='store_true')
-    parser.add_argument("--protocol",
+    parser.add_argument('--protocol',
                         type=str,
-                        choices=["grpc"],
-                        default="grpc")
+                        choices=['grpc'],
+                        default='grpc')
     parser.add_argument('--inter',
                         help='set inter op parallelism threads',
                         type=int,
@@ -660,11 +656,11 @@ if __name__ == '__main__':
         worker_hosts = []
         chief_hosts = []
         for key, value in cluster_config.items():
-            if "ps" == key:
+            if 'ps' == key:
                 ps_hosts = value
-            elif "worker" == key:
+            elif 'worker' == key:
                 worker_hosts = value
-            elif "chief" == key:
+            elif 'chief' == key:
                 chief_hosts = value
         if chief_hosts:
             worker_hosts = chief_hosts + worker_hosts
@@ -682,8 +678,8 @@ if __name__ == '__main__':
         if is_chief:
             print('This host is a chief')
         cluster = tf.train.ClusterSpec({
-            "ps": ps_hosts,
-            "worker": worker_hosts
+            'ps': ps_hosts,
+            'worker': worker_hosts
         })
         server = tf.distribute.Server(cluster,
                                       job_name=task_type,
