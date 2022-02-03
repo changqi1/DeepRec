@@ -147,21 +147,21 @@ The benchmark is performed on the [Alibaba Cloud ECS general purpose instance fa
         <td>FP32</td>
         <td>0.9995887</td>
         <td>0.500000</td>
-        <td>116.282 (baseline)</td>
+        <td>121.804 (baseline)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32</td>
         <td>0.9995887</td>
         <td>0.4996916</td>
-        <td>175.283 (150.74%)</td>
+        <td>182.622 (149.93%)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32+BF16</td>
         <td>0.9995887</td>
-        <td>0.4967092</td>
-        <td>171.546 (147.53%)</td>
+        <td>0.4898705</td>
+        <td>182.477 (149.81%)</td>
     </tr>
 </table>
 

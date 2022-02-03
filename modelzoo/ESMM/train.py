@@ -256,6 +256,12 @@ class ESMM():
 
         return l2
 
+    def __make_scope(self, name, bf16):
+        if(bf16):
+            return tf.variable_scope(name, reuse=tf.AUTO_REUSE).keep_weights()
+        else:
+            return tf.variable_scope(name, reuse=tf.AUTO_REUSE)
+
     def __build_model(self):
         #for key in TAG_COLUMN:
         #    self.feature[key] = tf.strings.split(self.feature[key], '|')
@@ -276,18 +282,12 @@ class ESMM():
             combo_emb = tf.feature_column.input_layer(self.feature,
                                                      self.__combo_column)
 
-        if self.__bf16:
-            user_emb = tf.cast(user_emb, dtype=tf.bfloat16)
-            with tf.variable_scope('user_mlp_layer',
-                                   partitioner=self.__dense_layer_partitioner,
-                                   reuse=tf.AUTO_REUSE).keep_weights():
-                for layer_id, num_hidden_units in enumerate(self.__user_mlp):
-                    user_emb = self.__create_dense_layer(user_emb,
-                                                          num_hidden_units,
-                                                          tf.nn.relu,
-                                                          f'user_mlp_{layer_id}')
-            user_emb = tf.cast(user_emb, dtype=tf.float32)
-        else:
+        with self.__make_scope('ESMM', self.__bf16):
+            if self.__bf16:
+                user_emb = tf.cast(user_emb, dtype=tf.bfloat16)
+                item_emb = tf.cast(item_emb, dtype=tf.bfloat16)
+                combo_emb = tf.cast(combo_emb, dtype=tf.bfloat16)
+
             with tf.variable_scope('user_mlp_layer',
                                    partitioner=self.__dense_layer_partitioner,
                                    reuse=tf.AUTO_REUSE):
@@ -297,18 +297,6 @@ class ESMM():
                                                          tf.nn.relu,
                                                          f'user_mlp_{layer_id}')
 
-        if self.__bf16:
-            item_emb = tf.cast(item_emb, dtype=tf.bfloat16)
-            with tf.variable_scope('item_mlp_layer',
-                                   partitioner=self.__dense_layer_partitioner,
-                                   reuse=tf.AUTO_REUSE).keep_weights():
-                for layer_id, num_hidden_units in enumerate(self.__item_mlp):
-                    item_emb = self.__create_dense_layer(item_emb,
-                                                         num_hidden_units,
-                                                         tf.nn.relu,
-                                                         f'item_mlp_{layer_id}')
-            item_emb = tf.cast(item_emb, dtype=tf.float32)
-        else:
             with tf.variable_scope('item_mlp_layer',
                                    partitioner=self.__dense_layer_partitioner,
                                    reuse=tf.AUTO_REUSE):
@@ -318,18 +306,6 @@ class ESMM():
                                                          tf.nn.relu,
                                                          f'item_mlp_{layer_id}')
 
-        if self.__bf16:
-            combo_emb = tf.cast(combo_emb, dtype=tf.bfloat16)
-            with tf.variable_scope('combo_mlp_layer',
-                                   partitioner=self.__dense_layer_partitioner,
-                                   reuse=tf.AUTO_REUSE).keep_weights():
-                for layer_id, num_hidden_units in enumerate(self.__combo_mlp):
-                    combo_emb = self.__create_dense_layer(combo_emb,
-                                                          num_hidden_units,
-                                                          tf.nn.relu,
-                                                          f'combo_mlp_{layer_id}')
-            combo_emb = tf.cast(combo_emb, dtype=tf.float32)
-        else:
             with tf.variable_scope('combo_mlp_layer',
                                    partitioner=self.__dense_layer_partitioner,
                                    reuse=tf.AUTO_REUSE):
@@ -339,74 +315,42 @@ class ESMM():
                                                           tf.nn.relu,
                                                           f'combo_mlp_{layer_id}')
 
-        concat = tf.concat([user_emb, item_emb, combo_emb], axis=1)
+            concat = tf.concat([user_emb, item_emb, combo_emb], axis=1)
 
-        pCVR = self.__build_cvr_model(concat)
-        pCTR = self.__build_ctr_model(concat)
+            pCVR = self.__build_cvr_model(concat)
+            pCTR = self.__build_ctr_model(concat)
 
-        pCTCVR = tf.cast(tf.multiply(pCVR, pCTR), tf.float32)
+            pCTCVR = tf.cast(tf.multiply(pCVR, pCTR), tf.float32)
         return pCTCVR
 
     def __build_cvr_model(self, net):
-        if self.__bf16:
-            net = tf.cast(net, dtype=tf.bfloat16)
-            with tf.variable_scope('cvr_mlp',
-                                   partitioner=self.__dense_layer_partitioner,
-                                   reuse=tf.AUTO_REUSE).keep_weights():
-                for layer_id, num_hidden_units in enumerate(self.__cvr_mlp):
-                    net = self.__create_dense_layer(net,
-                                                    num_hidden_units,
-                                                    tf.nn.relu,
-                                                    f'cvr_mlp_hiddenlayer_{layer_id}')
+        with tf.variable_scope('cvr_mlp',
+                               partitioner=self.__dense_layer_partitioner,
+                               reuse=tf.AUTO_REUSE):
+            for layer_id, num_hidden_units in enumerate(self.__cvr_mlp):
                 net = self.__create_dense_layer(net,
-                                                1,
-                                                tf.math.sigmoid,
-                                                'cvr_mlp_hiddenlayer_last')
-            net = tf.cast(net, dtype=tf.float32)
-        else:
-            with tf.variable_scope('cvr_mlp',
-                                   partitioner=self.__dense_layer_partitioner,
-                                   reuse=tf.AUTO_REUSE):
-                for layer_id, num_hidden_units in enumerate(self.__cvr_mlp):
-                    net = self.__create_dense_layer(net,
-                                                    num_hidden_units,
-                                                    tf.nn.relu,
-                                                    f'cvr_mlp_hiddenlayer_{layer_id}')
-                net = self.__create_dense_layer(net,
-                                                1,
-                                                tf.math.sigmoid,
-                                                'cvr_mlp_hiddenlayer_last')
+                                                num_hidden_units,
+                                                tf.nn.relu,
+                                                f'cvr_mlp_hiddenlayer_{layer_id}')
+            net = self.__create_dense_layer(net,
+                                            1,
+                                            tf.math.sigmoid,
+                                            'cvr_mlp_hiddenlayer_last')
         return net
 
     def __build_ctr_model(self, net):
-        if self.__bf16:
-            net = tf.cast(net, dtype=tf.bfloat16)
-            with tf.variable_scope('ctr_mlp',
-                                   partitioner=self.__dense_layer_partitioner,
-                                   reuse=tf.AUTO_REUSE).keep_weights():
-                for layer_id, num_hidden_units in enumerate(self.__ctr_mlp):
-                    net = self.__create_dense_layer(net,
-                                                    num_hidden_units,
-                                                    tf.nn.relu,
-                                                    f'ctr_mlp_hiddenlayer_{layer_id}')
+        with tf.variable_scope('ctr_mlp',
+                               partitioner=self.__dense_layer_partitioner,
+                               reuse=tf.AUTO_REUSE):
+            for layer_id, num_hidden_units in enumerate(self.__ctr_mlp):
                 net = self.__create_dense_layer(net,
-                                                1,
-                                                tf.math.sigmoid,
-                                                'ctr_mlp_hiddenlayer_last')
-            net = tf.cast(net, dtype=tf.float32)
-        else:
-            with tf.variable_scope('ctr_mlp',
-                                   partitioner=self.__dense_layer_partitioner,
-                                   reuse=tf.AUTO_REUSE):
-                for layer_id, num_hidden_units in enumerate(self.__ctr_mlp):
-                    net = self.__create_dense_layer(net,
-                                                    num_hidden_units,
-                                                    tf.nn.relu,
-                                                    f'ctr_mlp_hiddenlayer_{layer_id}')
-                net = self.__create_dense_layer(net,
-                                                1,
-                                                tf.math.sigmoid,
-                                                'ctr_mlp_hiddenlayer_last')
+                                                num_hidden_units,
+                                                tf.nn.relu,
+                                                f'ctr_mlp_hiddenlayer_{layer_id}')
+            net = self.__create_dense_layer(net,
+                                            1,
+                                            tf.math.sigmoid,
+                                            'ctr_mlp_hiddenlayer_last')
         return net
 
 def train(model,
