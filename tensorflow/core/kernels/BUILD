@@ -8397,16 +8397,21 @@ tf_cc_test_mkl(
     deps = [
         ":ops_testutil",
         ":ops_util",
+        ":softmax_op",
+        ":mkl_softmax_op",
+        "//tensorflow/core:tensorflow",
         "//tensorflow/cc:cc_ops",
+        "//tensorflow/cc:cc_ops_internal",
         "//tensorflow/core:core_cpu",
+        "//tensorflow/core:core_cpu_internal",
         "//tensorflow/core:framework",
         "//tensorflow/core:framework_internal",
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
-        "//tensorflow/core:tensorflow",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
+        "//third_party/eigen3",
     ],
 )
 
