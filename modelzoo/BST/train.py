@@ -345,6 +345,82 @@ class BST():
             net = layer(net)
         return net
 
+    def multihead_attention(self,
+                            id_cols,
+                            head_count,
+                            emb_dim,
+                            seq_len,
+                            seq_size,
+                            name='multi_head_att_net'):
+        with tf.variable_scope(name):
+            # spilt input to different head
+            # emb_dim is current_batch_max_seq_size
+
+            part_id_col = tf.concat(tf.split(id_cols, head_count, axis=-1),
+                                    axis=0)
+            # part_dim = tf.shape(part_id_col)[-1]
+            part_dim = part_id_col.get_shape().as_list()[-1]
+            # part_attention_net = self.attention_net(
+            #     part_id_col,
+            #     part_dim,
+            #     seq_len,
+            #     seq_size,
+            #     name='multi_head_attention')
+
+            # Q K V
+            query_net = tf.layers.dense(part_id_col,
+                                        units=part_dim,
+                                        activation=tf.nn.relu,
+                                        name=name + '_query')  # B, seq_len，dim
+            key_net = tf.layers.dense(part_id_col,
+                                      units=part_dim,
+                                      activation=tf.nn.relu,
+                                      name=name + '_key')
+            value_net = tf.layers.dense(part_id_col,
+                                        units=part_dim,
+                                        activation=tf.nn.relu,
+                                        name=name + '_value')
+            # scores = Q K^T
+            scores = tf.matmul(query_net, key_net,
+                               transpose_b=True)  # [B, seq_size, seq_size]
+
+            # mask: current_max_sequence, sequence_size = 50 (recover from padding)
+
+            # cur_seq_len is tensor scalar, maxlen is int
+            # only mask the cur_seq_len part
+            hist_mask = tf.sequence_mask(seq_len, maxlen=seq_size -
+                                         1)  # [B, seq_size-1]
+
+            cur_id_mask = tf.ones([tf.shape(hist_mask)[0], 1],
+                                  dtype=tf.bool)  # [B, 1]
+            mask = tf.concat([hist_mask, cur_id_mask], axis=1)  # [B, seq_size]
+            masks = tf.reshape(
+                tf.tile(mask, [head_count, seq_size]),
+                (-1, seq_size, seq_size))  # [B, seq_size, seq_size]
+
+            padding = tf.ones_like(scores) * (-2**32 + 1)
+            scores = tf.where(masks, scores,
+                              padding)  # [B, seq_size, seq_size]
+
+            # Scale
+            if self.bf16:
+                scores = tf.cast(scores, dtype=tf.float32)
+            scores = tf.nn.softmax(scores)  # (B, seq_size, seq_size)
+            if self.bf16:
+                scores = tf.cast(scores, dtype=tf.bfloat16)
+            att_res_net = tf.matmul(scores,
+                                    value_net)  # [B, seq_size, emb_dim]
+
+            att_res_net = tf.concat(tf.split(att_res_net, head_count, axis=0),
+                                    axis=2)
+
+            att_res_net = tf.layers.dense(att_res_net,
+                                          units=emb_dim,
+                                          activation=tf.nn.relu,
+                                          name='multi_head_attention')
+
+        return att_res_net
+
     def bst(self, bst_fea, seq_size, head_count, name):
         cur_id, hist_id_col, seq_len = bst_fea['key'], bst_fea[
             'hist_seq_emb'], bst_fea['hist_seq_len']
@@ -362,8 +438,8 @@ class BST():
         all_ids = tf.concat([hist_id_col, tf.expand_dims(cur_id, 1)], axis=1)
         emb_dim = int(all_ids.shape[2])
 
-        attention_net = self.multi_head_att_net(all_ids, head_count, emb_dim,
-                                                seq_len, seq_size)
+        attention_net = self.multihead_attention(all_ids, head_count, emb_dim,
+                                                 seq_len, seq_size)
         tmp_net = self.add_and_norm(all_ids,
                                     attention_net,
                                     emb_dim,
