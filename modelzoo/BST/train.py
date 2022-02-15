@@ -353,40 +353,30 @@ class BST():
                             seq_size,
                             name='multi_head_att_net'):
         with tf.variable_scope(name):
-            # spilt input to different head
             # emb_dim is current_batch_max_seq_size
-
-            part_id_col = tf.concat(tf.split(id_cols, head_count, axis=-1),
-                                    axis=0)
-            # part_dim = tf.shape(part_id_col)[-1]
-            part_dim = part_id_col.get_shape().as_list()[-1]
-            # part_attention_net = self.attention_net(
-            #     part_id_col,
-            #     part_dim,
-            #     seq_len,
-            #     seq_size,
-            #     name='multi_head_attention')
-
             # Q K V
-            query_net = tf.layers.dense(part_id_col,
-                                        units=part_dim,
+            query_net = tf.layers.dense(id_cols,
+                                        units=emb_dim,
                                         activation=tf.nn.relu,
                                         name=name + '_query')  # B, seq_len，dim
-            key_net = tf.layers.dense(part_id_col,
-                                      units=part_dim,
+            key_net = tf.layers.dense(id_cols,
+                                      units=emb_dim,
                                       activation=tf.nn.relu,
                                       name=name + '_key')
-            value_net = tf.layers.dense(part_id_col,
-                                        units=part_dim,
+            value_net = tf.layers.dense(id_cols,
+                                        units=emb_dim,
                                         activation=tf.nn.relu,
                                         name=name + '_value')
+
+            query_net = tf.concat(tf.split(query_net, head_count, axis=-1), axis=0)
+            key_net = tf.concat(tf.split(key_net, head_count, axis=-1), axis=0)
+            value_net = tf.concat(tf.split(value_net, head_count, axis=-1), axis=0)
+
             # scores = Q K^T
             scores = tf.matmul(query_net, key_net,
                                transpose_b=True)  # [B, seq_size, seq_size]
 
             # mask: current_max_sequence, sequence_size = 50 (recover from padding)
-
-            # cur_seq_len is tensor scalar, maxlen is int
             # only mask the cur_seq_len part
             hist_mask = tf.sequence_mask(seq_len, maxlen=seq_size -
                                          1)  # [B, seq_size-1]
