@@ -12,11 +12,6 @@ def sort_by_history_length(files):
             his_length = np.array(his_length)
             sort_index = np.argsort(his_length)
 
-            # arr = [1, 3, 5, 2, 4, 6]
-            # arr = np.array(arr)
-            # print (np.argsort(arr)) # 正序输出索引，从小到大
-            # print (np.argsort(-arr)) # 逆序输出索引，从大到小
-
             with open(file + '_sorted', 'w') as f_out:
                 FirstLine = True
                 for index in sort_index:
