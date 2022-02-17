@@ -245,8 +245,9 @@ class BST():
         self.predict = self.prediction()
         with tf.name_scope('head'):
             self.train_op, self.loss = self.optimizer()
-            self.acc, self.acc_op = tf.metrics.accuracy(
-                labels=self.label, predictions=self.predict)
+            self.acc, self.acc_op = tf.metrics.accuracy(labels=self.label,
+                                                        predictions=tf.round(
+                                                            self.predict))
             self.auc, self.auc_op = tf.metrics.auc(labels=self.label,
                                                    predictions=self.predict,
                                                    num_thresholds=1000)
@@ -368,9 +369,11 @@ class BST():
                                         activation=tf.nn.relu,
                                         name=name + '_value')
 
-            query_net = tf.concat(tf.split(query_net, head_count, axis=-1), axis=0)
+            query_net = tf.concat(tf.split(query_net, head_count, axis=-1),
+                                  axis=0)
             key_net = tf.concat(tf.split(key_net, head_count, axis=-1), axis=0)
-            value_net = tf.concat(tf.split(value_net, head_count, axis=-1), axis=0)
+            value_net = tf.concat(tf.split(value_net, head_count, axis=-1),
+                                  axis=0)
 
             # scores = Q K^T
             scores = tf.matmul(query_net, key_net,
