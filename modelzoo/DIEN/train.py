@@ -13,7 +13,6 @@ from tensorflow.python.ops import partitioned_variables
 from tensorflow.contrib.rnn.python.ops.core_rnn_cell import _Linear
 from tensorflow.python.feature_column.feature_column import _LazyBuilder
 from tensorflow.python.feature_column import utils as fc_utils
-from script.rnn import dynamic_rnn
 
 # Set to INFO for tracking training, default is WARN. ERROR for least messages
 tf.logging.set_verbosity(tf.logging.INFO)
@@ -147,36 +146,38 @@ class VecAttGRUCell(tf.nn.rnn_cell.RNNCell):
     def output_size(self):
         return self._num_units
 
-    def __call__(self, inputs, state, att_score):
-        return self.call(inputs, state, att_score)
+    def __call__(self, inputs, state):
+        return self.call(inputs, state)
 
     def call(self, inputs, state, att_score=None):
         """Gated recurrent unit (GRU) with nunits cells."""
+        _inputs = inputs[0]
+        att_score = inputs[1]
         if self._gate_linear is None:
             bias_ones = self._bias_initializer
             if self._bias_initializer is None:
-                bias_ones = tf.constant_initializer(1.0, dtype=inputs.dtype)
+                bias_ones = tf.constant_initializer(1.0, dtype=_inputs.dtype)
             with tf.variable_scope("gates"):  # Reset gate and update gate.
                 self._gate_linear = _Linear(
-                    [inputs, state],
+                    [_inputs, state],
                     2 * self._num_units,
                     True,
                     bias_initializer=bias_ones,
                     kernel_initializer=self._kernel_initializer)
 
-        value = tf.math.sigmoid(self._gate_linear([inputs, state]))
+        value = tf.math.sigmoid(self._gate_linear([_inputs, state]))
         r, u = tf.split(value=value, num_or_size_splits=2, axis=1)
 
         r_state = r * state
         if self._candidate_linear is None:
             with tf.variable_scope("candidate"):
                 self._candidate_linear = _Linear(
-                    [inputs, r_state],
+                    [_inputs, r_state],
                     self._num_units,
                     True,
                     bias_initializer=self._bias_initializer,
                     kernel_initializer=self._kernel_initializer)
-        c = self._activation(self._candidate_linear([inputs, r_state]))
+        c = self._activation(self._candidate_linear([_inputs, r_state]))
         u = (1.0 - att_score) * u
         new_h = u * state + (1 - u) * c
         return new_h, new_h
@@ -520,13 +521,12 @@ class DIEN():
 
         # RNN layer_1
         with tf.variable_scope('rnn_1'):
-            # run_output_1, _ = tf.nn.dynamic_rnn(
-            run_output_1, _ = dynamic_rnn(tf.nn.rnn_cell.GRUCell(
-                self.hidden_size),
-                                          inputs=his_item_emb,
-                                          sequence_length=sequence_length,
-                                          dtype=self.data_tpye,
-                                          scope="gru1")
+            run_output_1, _ = tf.nn.dynamic_rnn(
+                tf.nn.rnn_cell.GRUCell(self.hidden_size),
+                inputs=his_item_emb,
+                sequence_length=sequence_length,
+                dtype=self.data_tpye,
+                scope="gru1")
             tf.summary.histogram('GRU_outputs', run_output_1)
 
         # Aux loss
@@ -557,14 +557,12 @@ class DIEN():
 
         # RNN layer_2
         with tf.variable_scope('rnn_2'):
-            # _, final_state2 = tf.nn.dynamic_rnn(
-            _, final_state2 = dynamic_rnn(VecAttGRUCell(self.hidden_size),
-                                          inputs=run_output_1,
-                                          att_scores=tf.expand_dims(
-                                              alphas, -1),
-                                          sequence_length=sequence_length,
-                                          dtype=self.data_tpye,
-                                          scope="gru2")
+            _, final_state2 = tf.nn.dynamic_rnn(
+                VecAttGRUCell(self.hidden_size),
+                inputs=[run_output_1, tf.expand_dims(alphas, -1)],
+                sequence_length=sequence_length,
+                dtype=self.data_tpye,
+                scope="gru2")
             tf.summary.histogram('GRU2_Final_State', final_state2)
 
         top_input = tf.concat([
