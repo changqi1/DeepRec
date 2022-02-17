@@ -164,14 +164,12 @@ class DIN():
         else:
             self.data_tpye = tf.float32
 
-        self.debug = args.debug
-        self.printlist = []
-
         self.predict = self.prediction()
         with tf.name_scope('head'):
             self.train_op, self.loss = self.optimizer()
-            self.acc, self.acc_op = tf.metrics.accuracy(
-                labels=self.label, predictions=self.predict)
+            self.acc, self.acc_op = tf.metrics.accuracy(labels=self.label,
+                                                        predictions=tf.round(
+                                                            self.predict))
             self.auc, self.auc_op = tf.metrics.auc(labels=self.label,
                                                    predictions=self.predict,
                                                    num_thresholds=1000)
@@ -300,9 +298,7 @@ class DIN():
             return embedding
 
     def embedding_input(self):
-        for key in [
-                'HISTORY_ITEM', 'HISTORY_CATEGORY'
-        ]:
+        for key in ['HISTORY_ITEM', 'HISTORY_CATEGORY']:
             self.feature[key] = tf.strings.split(self.feature[key], '')
             self.feature[key] = tf.sparse.slice(
                 self.feature[key], [0, 0], [self.batch_size, MAX_SEQ_LENGTH])
@@ -488,7 +484,6 @@ def get_arg_parser():
                         help='slice size of dense layer partitioner. units KB',
                         type=int,
                         default=0)
-    parser.add_argument('--debug', action='store_true')
     return parser
 
 
@@ -518,7 +513,7 @@ def main(tf_config=None, server=None):
     # set batch size & steps
     batch_size = args.batch_size
     if args.steps == 0:
-        no_of_epochs = 3
+        no_of_epochs = 5
         train_steps = math.ceil(
             (float(no_of_epochs) * no_of_training_examples) / batch_size)
     else:
@@ -645,15 +640,11 @@ def main(tf_config=None, server=None):
                             os.path.join(checkpoint_dir,
                                          'timeline-%d.json' % _in), 'w') as f:
                         f.write(chrome_trace)
-                elif args.debug:
-                    _, train_loss, _ = sess.run(
-                        [model.train_op, model.loss, model.printlist])
                 else:
                     _, train_loss = sess.run([model.train_op, model.loss])
 
                 # print training loss and time cost
-                if (_in % 100 == 0
-                        or _in == train_steps - 1) and not args.debug:
+                if (_in % 100 == 0 or _in == train_steps - 1):
                     end = time.perf_counter()
                     cost_time = end - start
                     global_step_sec = (100 if _in % 100 == 0 else train_steps -
