@@ -37,7 +37,7 @@ limitations under the License.
 #include "tensorflow/core/util/mkl_util.h"
 
 // Compare performance of default Tensorflow convolution kernels (Eigen) with
-// MKL kernels on CPU.
+// OneDNN kernels on CPU.
 // Before running these benchmarks configure OpenMP environment variables:
 //   export KMP_BLOCKTIME=0
 //   export OMP_NUM_THREADS=${num_threads}
@@ -66,7 +66,7 @@ static Graph* Activation(const string& op_name, const string& kind,
                       .Finalize(graph, nullptr));
       return graph;
     }
-    // MKL forward op.
+    // OneDNN forward op.
     TF_CHECK_OK(NodeBuilder(graph->NewName(node_name), "_Mkl" + op_name)
                     .Input(input)
                     .Input(not_mkl_shape)
@@ -89,7 +89,7 @@ static Graph* Activation(const string& op_name, const string& kind,
     return graph;
   }
 
-  // MKL backward op.
+  // OneDNN backward op.
   TF_CHECK_OK(NodeBuilder(graph->NewName(node_name), "_Mkl" + op_name)
                   .Input(grad)
                   .Input(input)

@@ -39,20 +39,20 @@ limitations under the License.
 
 // This is a special case, because EIGEN kernels does not have Swish Kerenls.
 // Compare the performance of default tensorflow kernels (Eigen) with
-// MKL kernels on CPU.
+// OneDNN kernels on CPU.
 // Before running benchmarks, you need to configure OpenMP environment:
-//   export TF_DISABLE_MKL=1 //To avoid Eigen kernels are rewrote by MKL.
+//   export TF_DISABLE_MKL=1 //To avoid Eigen kernels are rewrote by OneDNN.
 //   export KMP_BLOCKTIME=0
 //   export OMP_NUM_THREADS=${num_threads}
 //   export KMP_AFFINITY=granularity=fine,verbose,compact,1,0
 //
-// Then you could use below command to test mkl and eigen performance:
+// Then you could use below command to test OneDNN and eigen performance:
 // $bazel run --config opt --config=mkl \
 //  //tensorflow/core/kernels/mkl:mkl_eltwise_swish_op_test -- --benchmarks=..
 //
 // ===========================================================================
-// If you want to test MKL kernels accuracy with Eigen kernels, you need:
-//   export TF_DISABLE_MKL=1 // To avoid Eigen kernels are rewrote by MKL.
+// If you want to test OneDNN kernels accuracy with Eigen kernels, you need:
+//   export TF_DISABLE_MKL=1 // To avoid Eigen kernels are rewrote by OneDNN.
 // $bazel run --config opt --config=mkl \
 //     //tensorflow/core/kernels/mkl:mkl_eltwise_swish_op_test
 
@@ -71,7 +71,7 @@ class CommonTestUtilities : public OpsTestBase {
  public:
   void PerformConversion(DataType dtype, const Tensor& tensor,
                          const Tensor& mkl_meta_tensor, Tensor* output) {
-    // Create an MKL to TF conversion node and execute it
+    // Create an OneDNN to TF conversion node and execute it
     TF_EXPECT_OK(NodeDefBuilder("mkl_to_tf_op", "_MklToTf")
                      .Input(FakeInput(dtype))     // Input
                      .Input(FakeInput(DT_UINT8))  // Mkl second tensor
@@ -227,7 +227,7 @@ static Graph* SwishGraph(const string& kind, const TensorShape& shape) {
                     .Finalize(graph, &mul));
     return graph;
   }
-  // Mkl Swish op.
+  // OneDNN Swish op.
   TF_CHECK_OK(NodeBuilder(graph->NewName("Mkl_swish"), "_MklSwish")
                   .Input(input)
                   .Input(not_mkl_shape)

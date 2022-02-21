@@ -157,7 +157,7 @@ class MklDnnMatMulFwdPrimitive : public MklPrimitive {
  private:
   // Primitive reuse context for inner-product Fwd op
   struct MklDnnMatMulFwdContext {
-    // MKL-DNN memory.
+    // OneDNN memory.
     std::shared_ptr<dnnl::memory> src_mem;
     std::shared_ptr<dnnl::memory> weight_mem;
     std::shared_ptr<dnnl::memory> bias_mem;
@@ -458,7 +458,7 @@ class MklDnnMatMulBwdFilterPrimitive : public MklPrimitive {
  private:
   // Primitive reuse context for inner-product Bwd op
   struct MklDnnMatMulBwdContext {
-    // MKL-DNN memory.
+    // OneDNN memory.
     std::shared_ptr<dnnl::memory> src_mem;
     std::shared_ptr<dnnl::memory> diff_weight_mem;
     std::shared_ptr<dnnl::memory> diff_bias_mem;
@@ -812,7 +812,7 @@ class MklMatMulPrimitive : public MklPrimitive {
  private:
   // Primitive reuse context for MatMul op
   struct MklMatMulContext {
-    // MKL-DNN memory.
+    // OneDNN memory.
     std::shared_ptr<dnnl::memory> a_mem;
     std::shared_ptr<dnnl::memory> b_mem;
     std::shared_ptr<dnnl::memory> c_mem;

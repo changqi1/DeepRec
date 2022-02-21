@@ -149,7 +149,7 @@ message DebugOptions {
   // ops.
   bool xla_gpu_use_cudnn_batchnorm = 94;
 
-  // Generate calls to MKL-DNN in the CPU backend.
+  // Generate calls to OneDNN in the CPU backend.
   bool xla_cpu_use_mkl_dnn = 97;
 
   // Maximum kernel unroll factor for the GPU backend.
