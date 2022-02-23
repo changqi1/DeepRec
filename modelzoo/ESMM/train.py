@@ -210,7 +210,7 @@ class ESMM():
         with tf.name_scope('head'):
             self.train_op, self.loss = self.compute_loss()
             self.acc, self.acc_op = tf.metrics.accuracy(labels=self.label,
-                                                        predictions=self.model)
+                                                        predictions=tf.round(self.model))
             self.auc, self.auc_op = tf.metrics.auc(labels=self.label,
                                                    predictions=self.model,
                                                    num_thresholds=1000)
