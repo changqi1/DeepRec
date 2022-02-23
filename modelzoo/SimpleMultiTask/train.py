@@ -134,7 +134,7 @@ class SimpleMultiTask():
             self.train_op, self.total_loss = self.__compute_loss()
             preds = tf.squeeze(tf.stack([self.clk_model, self.buy_model], axis=1), [-1])
             self.acc, self.acc_op = tf.metrics.accuracy(labels=labels,
-                                                        predictions=preds)
+                                                        predictions=tf.round(preds))
             self.auc, self.auc_op = tf.metrics.auc(labels=labels,
                                                    predictions=preds,
                                                    num_thresholds=1000)
