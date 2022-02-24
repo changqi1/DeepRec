@@ -12,27 +12,210 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifdef INTEL_MKL
 
+#ifdef INTEL_MKL
+#include <functional>
 #include <vector>
 #include "dnnl.hpp"
+#include "absl/strings/match.h"
+#include "tensorflow/cc/ops/const_op.h"
+#include "tensorflow/cc/ops/nn_ops.h"
+#include "tensorflow/cc/ops/array_ops.h"
+#include "tensorflow/cc/ops/array_ops_internal.h"
+#include "tensorflow/cc/ops/standard_ops.h"
 #include "tensorflow/core/common_runtime/kernel_benchmark_testlib.h"
-#include "tensorflow/core/framework/allocator.h"
-#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/fake_input.h"
+#include "tensorflow/core/framework/node_def_builder.h"
 #include "tensorflow/core/framework/tensor.h"
-#include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/framework/types.pb.h"
-#include "tensorflow/core/graph/node_builder.h"
-#include "tensorflow/core/graph/testlib.h"
 #include "tensorflow/core/kernels/ops_testutil.h"
 #include "tensorflow/core/kernels/ops_util.h"
-#include "tensorflow/core/lib/core/status_test_util.h"
-#include "tensorflow/core/platform/prefetch.h"
+#include "tensorflow/core/platform/cpu_info.h"
+#include "tensorflow/core/platform/env.h"
+#include "tensorflow/core/platform/stacktrace_handler.h"
+#include "tensorflow/core/platform/str_util.h"
 #include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/platform/test_benchmark.h"
+#include "tensorflow/core/public/session.h"
+#include "tensorflow/core/framework/fake_input.h"
 #include "tensorflow/core/util/mkl_util.h"
+#include <gtest/gtest.h>
 
 namespace tensorflow {
+
+//----------------------------------------------------------------------------//
+// Slice Unit Tests are below.                                                //
+//----------------------------------------------------------------------------//
+
+namespace MKLSliceTestDefs {
+    typedef std::tuple<
+    DataType,             // input_type
+    std::vector<long long int>
+    > SliceTestParams;
+    std::vector<DataType> dataTypes {
+        DataType::DT_FLOAT,
+        DataType::DT_BFLOAT16
+    };
+    std::vector<std::vector<long long int>> INPUT = {{200, 15000}};
+} // namespace MKLSliceTestDefs
+
+using namespace MKLSliceTestDefs;
+class SliceTestBase :
+    public ::testing::WithParamInterface<MKLSliceTestDefs::SliceTestParams>,
+    public OpsTestBase {
+ private:
+    // Test definition (straight from Params, filled in SetUp)
+    DataType input_type;
+    std::vector<long long int> input_size;
+    // Test input Tensors (filled in SetUp)
+    Tensor input;
+    Tensor begin;
+    Tensor sizes;
+    Tensor zeros;
+    // Test output Tensors (filled in Run method)
+    Tensor mkl_values;
+    Tensor default_values;
+
+    static void RunAndFetch(const tensorflow::Scope& root, const string& fetch,
+                          Tensor* output) {
+    tensorflow::GraphDef graph;
+    TF_ASSERT_OK(root.ToGraphDef(&graph));
+    std::unique_ptr<tensorflow::Session> session(
+        tensorflow::NewSession(tensorflow::SessionOptions()));
+    TF_ASSERT_OK(session->Create(graph));
+    std::vector<Tensor> unfused_tensors;
+    TF_ASSERT_OK(session->Run({}, {fetch}, {}, &unfused_tensors));
+    *output = unfused_tensors[0];
+    }
+
+    void runDefault() {
+          auto root = tensorflow::Scope::NewRootScope();
+          auto input_op =
+              ops::Const(root.WithOpName("input"), Input::Initializer(input));
+          auto begin_op =
+              ops::Const(root.WithOpName("begin"), Input::Initializer(begin));
+          auto sizes_op =
+              ops::Const(root.WithOpName("sizes"), Input::Initializer(sizes));
+          Output next_op = ops::Slice(root.WithOpName("slice"), input_op, begin_op, sizes_op);
+          string last_op = "slice";
+          RunAndFetch(root, last_op, &default_values);
+    };
+
+    void runMkl() {
+    TF_EXPECT_OK(
+        NodeDefBuilder("mkl_slice_op", "_MklSlice") //build node
+            .Input(FakeInput(input_type))
+            .Input(FakeInput(DT_INT32))
+            .Input(FakeInput(DT_INT32))
+            .Input(FakeInput(DT_UINT8))
+            .Input(FakeInput(DT_UINT8))
+            .Input(FakeInput(DT_UINT8))
+            .Attr("_kernel", "MklLayoutDependentOp")
+            .Finalize(node_def()));
+    TF_EXPECT_OK(InitOp()); //initial
+    switch(input_type) {
+        case DT_FLOAT:
+            AddInputFromArray<float>(input.shape(), input.flat<float>()); // input
+            break;
+        case DT_BFLOAT16:
+            AddInputFromArray<Eigen::bfloat16>(input.shape(), input.flat<Eigen::bfloat16>()); // input
+            break;
+        default:
+            GTEST_FAIL() << "Unexpected DataType";
+    }
+    AddInputFromArray<int32>(begin.shape(), begin.flat<int32>()); // begin
+    AddInputFromArray<int32>(sizes.shape(), sizes.flat<int32>()); // sizes
+    AddInputFromArray<uint8_t>(zeros.shape(), zeros.flat<uint8_t>()); // mkl
+    AddInputFromArray<uint8_t>(zeros.shape(), zeros.flat<uint8_t>()); // mkl
+    AddInputFromArray<uint8_t>(zeros.shape(), zeros.flat<uint8_t>()); // mkl
+    TF_EXPECT_OK(RunOpKernel()); //Run the node computation
+    mkl_values = *GetOutput(0); //Get output
+    }
+ public:
+    static std::string getTestCaseName(::testing::TestParamInfo<SliceTestParams> obj) {
+        DataType input_type;
+        std::vector<long long int> input_size;
+        std::tie(input_type, input_size) = obj.param;
+        std::ostringstream result;
+        result << "Slice_Type_";
+        switch(input_type) {
+            case DataType::DT_FLOAT:
+                result << "FLOAT";
+                break;
+            case DataType::DT_BFLOAT16:
+                result << "BFLOAT16";
+                break;
+            default:
+                result << "UNRECOGNISED_TYPE";
+        }
+        result << "_Input";
+        for (auto &x : input_size) {
+            result << "_" << x;
+        }
+        result << "_Begin_10_10";
+        result << "_Size_100_100";
+        return result.str();
+    }
+
+    void SetUp() {
+        std::tie(input_type, input_size) = this->GetParam();
+        input = Tensor(input_type, TensorShape(tensorflow::gtl::ArraySlice<long long int>(input_size.data(), input_size.size())));
+        switch(input_type) {
+            case DT_FLOAT:
+                input.flat<float>() = input.flat<float>().template setRandom<Eigen::internal::NormalRandomGenerator<float>>(); // input
+                break;
+            case DT_BFLOAT16:
+                input.flat<Eigen::bfloat16>() = input.flat<Eigen::bfloat16>().template setRandom<Eigen::internal::UniformRandomGenerator<Eigen::bfloat16>>(); // input
+		        input.flat<Eigen::bfloat16>() = input.flat<Eigen::bfloat16>() - input.flat<Eigen::bfloat16>().constant((Eigen::bfloat16)0.5);
+		        input.flat<Eigen::bfloat16>() = input.flat<Eigen::bfloat16>() * input.flat<Eigen::bfloat16>().constant((Eigen::bfloat16)200.0);
+                break;
+            default:
+                GTEST_FAIL() << "Unexpected DataType";
+        }
+        begin = Tensor(DT_INT32, TensorShape({2}));
+        begin.vec<int32>()(0) = 10;
+        begin.vec<int32>()(1) = 10;
+
+        sizes = Tensor(DT_INT32, TensorShape({2}));
+        sizes.vec<int32>()(0) = 100;
+        sizes.vec<int32>()(1) = 100;
+
+        zeros = Tensor(DT_UINT8, TensorShape({64, 64}));
+        auto zeros_mapped = zeros.tensor<uint8_t, 2>();
+        for(int i = 0; i < 64; i++){
+            for(int j = 0; j < 64; j++){
+                zeros_mapped(i, j) = 0;
+            }
+        }
+    }
+
+    void Run() {
+        runDefault();
+        runMkl();
+    }
+
+    void Validate() {
+        ASSERT_EQ(default_values.dtype(), mkl_values.dtype());
+        ASSERT_EQ(default_values.shape(), mkl_values.shape());
+        test::ExpectClose(default_values, mkl_values, 1e-4);
+    }
+};
+
+TEST_P(SliceTestBase, CompareWithRefs) {
+    SetUp();
+    Run();
+    Validate();
+};
+
+INSTANTIATE_TEST_CASE_P(Slice, SliceTestBase,
+    ::testing::Combine(
+        ::testing::ValuesIn(dataTypes),
+        ::testing::ValuesIn(INPUT)),
+    SliceTestBase::getTestCaseName);
+
+//----------------------------------------------------------------------------//
+// Performance benchmarks are below.                                          //
+//----------------------------------------------------------------------------//
 
 template <typename T>
 static Graph* Slice2D(const string& kind, DataType type, int size) {
