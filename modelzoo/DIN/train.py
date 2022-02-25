@@ -555,8 +555,6 @@ def main(tf_config=None, server=None):
                 input_layer_partitioner=input_layer_partitioner,
                 dense_layer_partitioner=dense_layer_partitioner)
 
-    model.printlist.sort(key=lambda x: x.name)
-
     sess_config = tf.ConfigProto()
     if args.inter:
         sess_config.inter_op_parallelism_threads = args.inter
