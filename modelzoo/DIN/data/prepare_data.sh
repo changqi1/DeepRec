@@ -9,4 +9,3 @@ python script/split_by_user.py
 python script/generate_voc.py
 
 python script/pick2txt.py
-python script/sort.py

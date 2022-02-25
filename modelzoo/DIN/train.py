@@ -27,7 +27,7 @@ TRAIN_DATA_COLUMNS = LABEL_COLUMN + UNSEQ_COLUMNS + SEQ_COLUMNS
 EMBEDDING_DIM = 18
 HIDDEN_SIZE = 18 * 2
 ATTENTION_SIZE = 18 * 2
-MAX_SEQ_LENGTH = 100
+MAX_SEQ_LENGTH = 50
 
 
 def add_layer_summary(value, tag):
@@ -140,7 +140,6 @@ class DIN():
             raise ValueError('Dataset is not defined.')
         if not feature_column:
             raise ValueError('Dense column or sparse column is not defined.')
-        # self.feature_column = feature_column
         self.uid_emb_column = feature_column['uid_emb_column']
         self.item_cate_column = feature_column['item_cate_column']
         self.his_item_cate_column = feature_column['his_item_cate_column']
@@ -371,7 +370,6 @@ class DIN():
                 his_item_emb = tf.cast(his_item_emb, tf.bfloat16)
 
             item_his_eb_sum = tf.reduce_sum(his_item_emb, 1)
-            # mask = tf.sequence_mask(sequence_length, maxlen=MAX_SEQ_LENGTH)
             mask = tf.sequence_mask(sequence_length)
 
         # Attention layer
@@ -490,19 +488,11 @@ def get_arg_parser():
 def main(tf_config=None, server=None):
     # check dataset
     print('Checking dataset')
-    train_file = args.data_location + '/local_train_splitByUser_sorted'
-    test_file = args.data_location + '/local_test_splitByUser_sorted'
+    train_file = args.data_location + '/local_train_splitByUser'
+    test_file = args.data_location + '/local_test_splitByUser'
 
     if (not os.path.exists(train_file)) or (not os.path.exists(test_file)):
-        print(
-            '------------------------------------------------------------------------------------------'
-        )
-        print(
-            "Dataset does not exist in the given data_location. Please provide valid path"
-        )
-        print(
-            '------------------------------------------------------------------------------------------'
-        )
+        print("Dataset does not exist in the given data_location.")
         sys.exit()
     no_of_training_examples = sum(1 for line in open(train_file))
     no_of_test_examples = sum(1 for line in open(test_file))
@@ -513,7 +503,7 @@ def main(tf_config=None, server=None):
     # set batch size & steps
     batch_size = args.batch_size
     if args.steps == 0:
-        no_of_epochs = 5
+        no_of_epochs = 3
         train_steps = math.ceil(
             (float(no_of_epochs) * no_of_training_examples) / batch_size)
     else:
