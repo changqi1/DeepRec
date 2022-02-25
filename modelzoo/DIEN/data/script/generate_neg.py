@@ -9,11 +9,12 @@ def createNegData(file):
             FirstLine = True
             for line in f_raw:
                 linelist = line.strip().split('\t')
-                str = line.strip()
+                # str = line.strip()
                 uid = linelist[1]
 
                 if uid not in user_history_behavior:
-                    str += ('\t' * 2)
+                    # str += ('\t' * 2)
+                    str = '\t'
                 else:
                     his_items = linelist[4].split('')
                     neg_items_str = ''
@@ -42,8 +43,9 @@ def createNegData(file):
                             tmp_cates_str += (cate + '')
                         neg_items_str += (tmp_items_str[:-1] + '')
                         neg_cates_str += (tmp_cates_str[:-1] + '')
-                    str += ('\t' + neg_items_str[:-1] + '\t' +
-                            neg_cates_str[:-1])
+                    # str += ('\t' + neg_items_str[:-1] + '\t' +
+                    #         neg_cates_str[:-1])
+                    str = neg_items_str[:-1] + '\t' + neg_cates_str[:-1]
                 if FirstLine:
                     f_out.write(str)
                     FirstLine = False
@@ -60,7 +62,6 @@ with open('user_history_behavior.txt', 'r') as f:
         cates = linelist[2].split('')
         user_history_behavior[uid] = [items, cates]
 
-# data_file = ['local_test_splitByUser', 'local_train_splitByUser']
-data_file = ['local_test_splitByUser_sorted', 'local_train_splitByUser_sorted']
+data_file = ['local_test_splitByUser', 'local_train_splitByUser']
 for file in data_file:
     createNegData(file)

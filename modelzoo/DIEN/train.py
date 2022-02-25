@@ -28,8 +28,7 @@ TRAIN_DATA_COLUMNS = LABEL_COLUMN + UNSEQ_COLUMNS + SEQ_COLUMNS
 EMBEDDING_DIM = 18
 HIDDEN_SIZE = 18 * 2
 ATTENTION_SIZE = 18 * 2
-MAX_SEQ_LENGTH = 100
-NEG_SEQ_LENGTH = 1 * MAX_SEQ_LENGTH
+MAX_SEQ_LENGTH = 50
 
 
 def add_layer_summary(value, tag):
@@ -51,22 +50,30 @@ def _assert_all_equal_and_return(tensors, name=None):
 
 
 def generate_input_data(filename, batch_size, num_epochs):
-    def parse_csv(value):
+    def parse_csv(value, neg_value):
         tf.logging.info('Parsing {}'.format(filename))
-        cate_defaults = [[" "] for i in range(0, 7)]
+        cate_defaults = [[" "] for i in range(0, 5)]
+        # cate_defaults = [[" "] for i in range(0, 7)]
         label_defaults = [[0]]
         column_headers = TRAIN_DATA_COLUMNS
         record_defaults = label_defaults + cate_defaults
         columns = tf.io.decode_csv(value,
                                    record_defaults=record_defaults,
                                    field_delim='\t')
+        neg_columns = tf.io.decode_csv(neg_value,
+                                       record_defaults=[[""], [""]],
+                                       field_delim='\t')
+        columns.extend(neg_columns)
         all_columns = collections.OrderedDict(zip(column_headers, columns))
+
         labels = all_columns.pop(LABEL_COLUMN[0])
         features = all_columns
         return features, labels
 
     # Extract lines from input files using the Dataset API.
     dataset = tf.data.TextLineDataset(filename)
+    dataset_neg_samples = tf.data.TextLineDataset(filename + '_neg')
+    dataset = tf.data.Dataset.zip((dataset, dataset_neg_samples))
     dataset = dataset.shuffle(buffer_size=20000,
                               seed=2021)  # set seed for reproducing
     dataset = dataset.repeat(num_epochs)
@@ -225,9 +232,6 @@ class DIEN():
             self.data_tpye = tf.bfloat16
         else:
             self.data_tpye = tf.float32
-
-        self.debug = args.debug
-        self.printlist = []
 
         self.predict = self.prediction()
         with tf.name_scope('head'):
@@ -491,10 +495,17 @@ class DIEN():
     def top_fc_layer(self, inputs):
         bn1 = tf.layers.batch_normalization(inputs=inputs, name='bn1')
         dnn1 = tf.layers.dense(bn1, 200, activation=None, name='dnn1')
-        dnn1 = self.dice(dnn1, name='dice_1')
+        if args.norelu:
+            dnn1 = self.dice(dnn1, name='dice_1')
+        else:
+            dnn1 = tf.nn.relu(dnn1)
 
         dnn2 = tf.layers.dense(dnn1, 80, activation=None, name='dnn2')
-        dnn2 = self.dice(dnn2, name='dice_2')
+        if args.norelu:
+            dnn2 = self.dice(dnn2, name='dice_2')
+        else:
+            dnn2 = tf.nn.relu(dnn2)
+
         dnn3 = tf.layers.dense(dnn2, 2, activation=None, name='dnn3')
         logits = tf.layers.dense(dnn3, 1, activation=None, name='logits')
         add_layer_summary(dnn1, 'dnn1')
@@ -671,29 +682,22 @@ def get_arg_parser():
                         help='slice size of dense layer partitioner. units KB',
                         type=int,
                         default=0)
-    parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--norelu', action='store_true')
     return parser
 
 
 def main(tf_config=None, server=None):
     # check dataset
     print('Checking dataset')
-    # train_file = args.data_location + '/local_train_splitByUser_neg'
-    # test_file = args.data_location + '/local_test_splitByUser_neg'
-    train_file = args.data_location + '/local_train_splitByUser_sorted_neg'
-    test_file = args.data_location + '/local_test_splitByUser_sorted_neg'
+    train_file = args.data_location + '/local_train_splitByUser'
+    test_file = args.data_location + '/local_test_splitByUser'
 
-    if (not os.path.exists(train_file)) or (not os.path.exists(test_file)):
-        print(
-            '------------------------------------------------------------------------------------------'
-        )
-        print(
-            "Dataset does not exist in the given data_location. Please provide valid path"
-        )
-        print(
-            '------------------------------------------------------------------------------------------'
-        )
+    if (not os.path.exists(train_file)) or (not os.path.exists(test_file)) or (
+            not os.path.exists(train_file + '_neg')) or (
+                not os.path.exists(test_file + '_neg')):
+        print("Dataset does not exist in the given data_location.")
         sys.exit()
+
     no_of_training_examples = sum(1 for line in open(train_file))
     no_of_test_examples = sum(1 for line in open(test_file))
     print("Numbers of training dataset is {}".format(no_of_training_examples))
@@ -754,8 +758,6 @@ def main(tf_config=None, server=None):
                  inputs=next_element,
                  input_layer_partitioner=input_layer_partitioner,
                  dense_layer_partitioner=dense_layer_partitioner)
-
-    model.printlist.sort(key=lambda x: x.name)
 
     sess_config = tf.ConfigProto()
     if args.inter:
@@ -830,15 +832,11 @@ def main(tf_config=None, server=None):
                             os.path.join(checkpoint_dir,
                                          'timeline-%d.json' % _in), 'w') as f:
                         f.write(chrome_trace)
-                elif args.debug:
-                    _, train_loss, _ = sess.run(
-                        [model.train_op, model.loss, model.printlist])
                 else:
                     _, train_loss = sess.run([model.train_op, model.loss])
 
                 # print training loss and time cost
-                if (_in % 100 == 0
-                        or _in == train_steps - 1) and not args.debug:
+                if (_in % 100 == 0 or _in == train_steps - 1):
                     end = time.perf_counter()
                     cost_time = end - start
                     global_step_sec = (100 if _in % 100 == 0 else train_steps -
