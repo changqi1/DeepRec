@@ -77,17 +77,18 @@ def build_feature_cols():
     return feature_columns
 
 def generate_input_data(filename, batch_size, num_epochs, seed):
-    def parse_csv_and_split_on_labels_features_tuple(x):
+    def parse_csv(x):
         l = list(zip(headers, tf.io.decode_csv(x, defaults)))
         # This is because Dataset.map() have strange requirement of using collections.OrderedDict
         # otherwise throws type exception.
         return collections.OrderedDict(l[:2]), collections.OrderedDict(l[2:])
 
     return (tf.data.TextLineDataset(filename)
-            .shuffle(buffer_size=50000, seed=seed)
+            .shuffle(buffer_size=400000, seed=seed)
             .repeat(num_epochs)
             .batch(batch_size)
-            .map(parse_csv_and_split_on_labels_features_tuple))
+            .map(parse_csv, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+            .prefetch(32))
 
 def add_layer_summary(value, tag):
     tf.summary.scalar('%s/fraction_of_zero_values' % tag,
@@ -100,6 +101,7 @@ class SimpleMultiTask():
                  feature_columns,
                  mlp=[256, 196, 128, 64],
                  bf16=False,
+                 learning_rate=0.1,
                  input_layer_partitioner=None,
                  dense_layer_partitioner=None):
         if not input:
@@ -110,13 +112,14 @@ class SimpleMultiTask():
         self.__feature_columns = feature_columns
         self.__mlp = mlp
         self.__bf16 = bf16
+        self.__learning_rate = learning_rate
 
         self.__input_layer_partitioner = input_layer_partitioner
         self.__dense_layer_partitioner = dense_layer_partitioner
 
         self.__feature = input[1]
-        self.__label = input[0]
-        labels = tf.stack([self.__label['clk'], self.__label['buy']], axis=1)
+        self.__labels = input[0]
+        self.__label = tf.stack([self.__labels['clk'], self.__labels['buy']], axis=1)
 
         with tf.variable_scope('input_layer',
                                 partitioner=self.__input_layer_partitioner,
@@ -129,14 +132,14 @@ class SimpleMultiTask():
                                reuse=tf.AUTO_REUSE):
             self.clk_model, self.clk_logits = self.__build_clk_model()
             self.buy_model, self.buy_logits = self.__build_buy_model()
+            self.model = tf.squeeze(tf.stack([self.clk_model, self.buy_model], axis=1), [-1])
 
         with tf.name_scope('head'):
-            self.train_op, self.total_loss = self.__compute_loss()
-            preds = tf.squeeze(tf.stack([self.clk_model, self.buy_model], axis=1), [-1])
-            self.acc, self.acc_op = tf.metrics.accuracy(labels=labels,
-                                                        predictions=tf.round(preds))
-            self.auc, self.auc_op = tf.metrics.auc(labels=labels,
-                                                   predictions=preds,
+            self.train_op, self.loss = self.__compute_loss()
+            self.acc, self.acc_op = tf.metrics.accuracy(labels=self.__label,
+                                                        predictions=tf.round(self.model))
+            self.auc, self.auc_op = tf.metrics.auc(labels=self.__label,
+                                                   predictions=self.model,
                                                    num_thresholds=1000)
             tf.summary.scalar('eval_acc', self.acc)
             tf.summary.scalar('eval_auc', self.auc)
@@ -151,45 +154,16 @@ class SimpleMultiTask():
         return dense_layer
 
     def __compute_loss(self):
-        loss_clk = tf.losses.sigmoid_cross_entropy(multi_class_labels=self.__label['clk'], logits=self.clk_logits)
-        loss_buy = tf.losses.sigmoid_cross_entropy(multi_class_labels=self.__label['buy'], logits=self.buy_logits)
-
-        total_loss = loss_buy + loss_clk
-
-        def exponential_decay_with_burnin(global_step,
-                                          learning_rate_base,
-                                          learning_rate_decay_steps,
-                                          learning_rate_decay_factor,
-                                          burnin_learning_rate=0.0,
-                                          burnin_steps=0,
-                                          min_learning_rate=0.0,
-                                          staircase=True):
-            if burnin_learning_rate == 0:
-                burnin_rate = learning_rate_base
-            else:
-                slope = (learning_rate_base - burnin_learning_rate) / burnin_steps
-                burnin_rate = slope * tf.cast(global_step, tf.float32) + burnin_learning_rate
-            post_burnin_learning_rate = tf.train.exponential_decay(
-                    learning_rate_base,
-                    global_step - burnin_steps,
-                    learning_rate_decay_steps,
-                    learning_rate_decay_factor,
-                    staircase=staircase)
-            return tf.maximum(tf.where(tf.less(tf.cast(global_step, tf.int32), tf.constant(burnin_steps)),
-                                       burnin_rate, post_burnin_learning_rate),
-                              min_learning_rate,
-                              name='learning_rate')
+        bce_loss_func = tf.keras.losses.BinaryCrossentropy()
+        self.model = tf.squeeze(self.model)
+        loss = tf.math.reduce_mean(bce_loss_func(self.__label, self.model))
+        tf.summary.scalar('loss', loss)
 
         self.global_step = tf.train.get_or_create_global_step()
-        learning_rate = exponential_decay_with_burnin(self.global_step,
-                                                      0.001,
-                                                      1000,
-                                                      0.5,
-                                                      min_learning_rate=1e-07)
+        optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.__learning_rate)
 
-        train_op = tf.train.AdamOptimizer(learning_rate).minimize(total_loss, global_step=self.global_step)
-        tf.summary.scalar('loss', total_loss)
-        return train_op, total_loss
+        train_op = optimizer.minimize(loss, global_step=self.global_step)
+        return train_op, loss
 
     def __build_clk_model(self):
         if self.__bf16:
@@ -284,7 +258,7 @@ def train(model,
         hooks.append(tf.train.LoggingTensorHook(
                         {
                             'steps': model.global_step,
-                            'loss': model.total_loss
+                            'loss': model.loss
                         },
                      every_n_iter=100))
 
@@ -302,7 +276,7 @@ def train(model,
                 log_step_count_steps=100,
                 config=sess_config) as sess:
             while not sess.should_stop():
-                _, train_loss = sess.run([model.train_op, model.total_loss])
+                _, train_loss = sess.run([model.train_op, model.loss])
     else:
         with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())
@@ -319,14 +293,14 @@ def train(model,
             for i in range(0, train_steps):
                 if ((save_steps and save_steps > 0 and (i % save_steps == 0 or i == train_steps - 1))
                     or (checkpoint_dir and not save_steps and i == train_steps - 1)):
-                    _, train_loss, events = sess.run([model.train_op, model.total_loss, merged])
+                    _, train_loss, events = sess.run([model.train_op, model.loss, merged])
                     writer.add_summary(events, i)
                     checkpoint_path = saver.save(sess,
                                                  save_path=os.path.join(checkpoint_dir, 'smt-checkpoint'),
                                                  global_step=i)
                     print(f'Save checkpoint to {checkpoint_path}')
                 elif timeline_steps and timeline_steps > 0 and i % timeline_steps == 0:
-                    _, train_loss = sess.run([model.train_op, model.total_loss],
+                    _, train_loss = sess.run([model.train_op, model.loss],
                                              options=options,
                                              run_metadata=run_metadata)
                     fetched_timeline = tf_timeline.Timeline(run_metadata.step_stats)
@@ -337,7 +311,7 @@ def train(model,
                                          f'timeline-{i}.json'), 'w') as f:
                                          f.write(chrome_trace)
                 else:
-                    _, train_loss = sess.run([model.train_op, model.total_loss])
+                    _, train_loss = sess.run([model.train_op, model.loss])
 
                 # print training loss and time cost
                 if i % 100 == 0 or i == train_steps - 1:
@@ -379,6 +353,10 @@ def parse_args():
                         default='./result')
     parser.add_argument('--checkpoint_dir',
                         help='Full path to checkpoints output directory')
+    parser.add_argument('--learning_rate',
+                        help='Learning rate for model',
+                        type=float,
+                        default=0.1)
     parser.add_argument('--timeline',
                         help='number of steps on saving timeline',
                         type=int)
@@ -534,6 +512,7 @@ if __name__ == '__main__':
                 model = SimpleMultiTask(next_element,
                                         feature_columns,
                                         bf16=args.bf16,
+                                        learning_rate=args.learning_rate,
                                         input_layer_partitioner=input_layer_partitioner,
                                         dense_layer_partitioner=dense_layer_partitioner)
 
@@ -568,7 +547,8 @@ if __name__ == '__main__':
 
         model = SimpleMultiTask(next_element,
                                 feature_columns,
-                                bf16=args.bf16)
+                                bf16=args.bf16,
+                                learning_rate=args.learning_rate)
         train(model,
               iterator,
               args.output_dir,
