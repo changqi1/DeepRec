@@ -291,7 +291,7 @@ class DIEN():
         click_input_ = tf.concat([h_states, click_seq], -1)
         noclick_input_ = tf.concat([h_states, noclick_seq], -1)
         if dtype == tf.bfloat16:
-            with tf.variable_scope('auxiliary_net').keep_weights():
+            with tf.variable_scope('auxiliary_net').keep_weights(dtype=tf.float32):
                 click_prop_ = self.auxiliary_net(click_input_, stag=stag)[:, :,
                                                                           0]
                 noclick_prop_ = self.auxiliary_net(noclick_input_,
@@ -543,7 +543,8 @@ class DIEN():
         # Aux loss
         aux_loss_scope = tf.variable_scope(
             'aux_loss', partitioner=self.dense_layer_partitioner)
-        with aux_loss_scope.keep_weights() if self.bf16 else aux_loss_scope:
+        with aux_loss_scope.keep_weights(dtype=tf.float32) if self.bf16 \
+            else aux_loss_scope:
             self.aux_loss = self.auxiliary_loss(run_output_1[:, :-1, :],
                                                 his_item_emb[:, 1:, :],
                                                 noclk_his_item_emb[:, 1:, :],
@@ -555,7 +556,8 @@ class DIEN():
 
         # Attention layer
         attention_scope = tf.variable_scope('attention_layer')
-        with attention_scope.keep_weights() if self.bf16 else attention_scope:
+        with attention_scope.keep_weights(dtype=tf.float32) if self.bf16 \
+            else attention_scope:
             _, alphas = self.attention(item_emb,
                                        run_output_1,
                                        self.attention_size,
@@ -586,7 +588,8 @@ class DIEN():
             partitioner=self.dense_layer_partitioner,
             reuse=tf.AUTO_REUSE,
         )
-        with top_mlp_scope.keep_weights() if self.bf16 else top_mlp_scope:
+        with top_mlp_scope.keep_weights(dtype=tf.float32) if self.bf16 \
+            else top_mlp_scope:
             self.logits = self.top_fc_layer(top_input)
         if self.bf16:
             self.logits = tf.cast(self.logits, dtype=tf.float32)
@@ -776,9 +779,11 @@ def main(tf_config=None, server=None):
                 },
                 every_n_iter=100))
 
-        scaffold = tf.train.Scaffold(
-            local_init_op=tf.group(tf.global_variables_initializer(
-            ), tf.local_variables_initializer(), train_init_op))
+        scaffold = tf.train.Scaffold(local_init_op=tf.group(
+            tf.global_variables_initializer(), 
+            tf.local_variables_initializer(), 
+            tf.tables_initializer(), 
+            train_init_op))
 
         with tf.train.MonitoredTrainingSession(
                 master=server.target,
