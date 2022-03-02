@@ -519,7 +519,7 @@ def main(tf_config=None, server=None):
 
     # set directory path
     model_dir = os.path.join(args.output_dir,
-                             'model_DIEN_' + str(int(time.time())))
+                             'model_DIN_' + str(int(time.time())))
     checkpoint_dir = args.checkpoint if args.checkpoint else model_dir
     print("Saving model checkpoints to " + checkpoint_dir)
 
