@@ -374,7 +374,8 @@ class DIN():
 
         # Attention layer
         attention_scope = tf.variable_scope('attention_layer')
-        with attention_scope.keep_weights() if self.bf16 else attention_scope:
+        with attention_scope.keep_weights(dtype=tf.float32) if self.bf16 \
+            else attention_scope:
             attention_output = self.attention(item_emb, his_item_emb,
                                               self.attention_size, mask)
             att_fea = tf.reduce_sum(attention_output, 1)
@@ -390,7 +391,8 @@ class DIN():
             partitioner=self.dense_layer_partitioner,
             reuse=tf.AUTO_REUSE,
         )
-        with top_mlp_scope.keep_weights() if self.bf16 else top_mlp_scope:
+        with top_mlp_scope.keep_weights(dtype=tf.float32) if self.bf16 \
+            else top_mlp_scope:
             self.logits = self.top_fc_layer(top_input)
         if self.bf16:
             self.logits = tf.cast(self.logits, dtype=tf.float32)
@@ -572,9 +574,11 @@ def main(tf_config=None, server=None):
                 },
                 every_n_iter=100))
 
-        scaffold = tf.train.Scaffold(
-            local_init_op=tf.group(tf.global_variables_initializer(
-            ), tf.local_variables_initializer(), train_init_op))
+        scaffold = tf.train.Scaffold(local_init_op=tf.group(
+            tf.global_variables_initializer(), 
+            tf.local_variables_initializer(), 
+            tf.tables_initializer(), 
+            train_init_op))
 
         with tf.train.MonitoredTrainingSession(
                 master=server.target,
