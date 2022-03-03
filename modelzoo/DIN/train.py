@@ -410,9 +410,13 @@ class DIN():
         tf.summary.scalar('loss', loss)
 
         self.global_step = tf.train.get_or_create_global_step()
-        optimizor = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
+        optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
+        gradients = optimizer.compute_gradients(loss)
+        clipped_gradients = [(tf.clip_by_norm(grad, 5), var)
+                             for grad, var in gradients if grad is not None]
 
-        train_op = optimizor.minimize(loss, global_step=self.global_step)
+        train_op = optimizer.apply_gradients(clipped_gradients,
+                                             global_step=self.global_step)
 
         return train_op, loss
 
@@ -575,9 +579,9 @@ def main(tf_config=None, server=None):
                 every_n_iter=100))
 
         scaffold = tf.train.Scaffold(local_init_op=tf.group(
-            tf.global_variables_initializer(), 
-            tf.local_variables_initializer(), 
-            tf.tables_initializer(), 
+            tf.global_variables_initializer(),
+            tf.local_variables_initializer(),
+            tf.tables_initializer(),
             train_init_op))
 
         with tf.train.MonitoredTrainingSession(
