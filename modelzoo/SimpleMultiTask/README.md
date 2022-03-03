@@ -72,6 +72,7 @@ input:
     - `--batch_size`: Batch size to train. Default is `512`.
     - `--output_dir`: Full path to output directory for logs and saved model. Default is `./result`.
     - `--checkpoint_dir`: Full path to checkpoints output directory. Default is `$(OUTPUT_DIR)/model_$(MODEL_NAME)_$(TIMESTAMP)`
+    - `--learning_rate`: Learning rate for network. Default is `0.1`.
     - `--timeline`: Save steps of profile hooks to record timeline, zero to close, defualt is `None`.
     - `--save_steps`: Set the number of steps on saving checkpoints, zero to close. Default will be set to `None`.
     - `--keep_checkpoint_max`: Maximum number of recent checkpoint to keep. Default is `1`.
@@ -128,22 +129,22 @@ The benchmark is performed on the [Alibaba Cloud ECS general purpose instance fa
         <td>Community TensorFlow</td>
         <td>FP32</td>
         <td>0.97315</td>
-        <td>0.570676</td>
-        <td>38.757 (baseline)</td>
+        <td>0.745138</td>
+        <td>137.681 (baseline)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32</td>
         <td>0.97315</td>
-        <td>0.558207</td>
-        <td>46.016 (118.73%)</td>
+        <td>0.753086</td>
+        <td>203.474 (147.79%)</td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32+BF16</td>
         <td>0.97315</td>
-        <td>0.560356</td>
-        <td>46.136 (119.04%)</td>
+        <td>0.751338</td>
+        <td>224.093 (162.76%)</td>
     </tr>
 </table>
 
