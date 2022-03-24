@@ -59,7 +59,7 @@ input:
 ## Usage
 
 ### Stand-alone Training
-1.  Please prepare the [data set](#prepare) first.
+1.  Prepare the [data set](#prepare) first.
 
 2.  Create a docker image by DockerFile.
     Choose DockerFile corresponding to DeepRec(Pending) or Google tensorflow.
@@ -101,7 +101,7 @@ input:
     - `--input_layer_partitioner`: Slice size of input layer partitioner(units MB). Default is `0`.
     - `--dense_layer_partitioner`: Slice size of dense layer partitioner(units kB). Default is `0`.
 
-### Distribute Training
+### Distributed Training
 1. Prepare a K8S cluster and shared storage volume.
 2. Create a PVC(PeritetVolumeClaim) for storage volumn in cluster.
 3. Prepare docker image by DockerFile.
@@ -167,9 +167,6 @@ The benchmark is performed on the [Alibaba Cloud ECS general purpose instance fa
 
 Community TensorFlow version is v1.15.5.
 
-### Distributed Training
-The benchmark of distribute training
-
 ## Dataset
 Taobao dataset from [EasyRec](https://github.com/AlibabaPAI/EasyRec) is used.
 ### Prepare
@@ -214,5 +211,4 @@ Item's feature columns is as follow:
 
 ## TODO LIST
 Next To do
-- Distributed training and benchmark
-- Search for bigger dataset
+- Distributed training benchmark
