@@ -5318,6 +5318,35 @@ tf_kernel_library(
     deps = REQUIRED_DEPS,
 )
 
+cc_import(
+    name="libpta",
+    hdrs = [
+
+    ],
+    shared_library="libpta.so",
+)
+
+tf_kernel_library(
+    name = "tuning_matmul_op",
+    srcs = [
+        "tuning_ops/host_proxy.cpp",
+        "tuning_ops/host_proxy_manager.cpp",
+        "tuning_ops/tunable_matmul.cpp",
+        "tuning_ops/tuning_matmul_op.cc",
+    ],
+    includes = [
+        "tuning_ops/include",
+        "tuning_ops/host/include",
+        "tuning_ops/host/include/DataTypes",
+    ],
+    hdrs = [
+        "tuning_ops/host_proxy.h",
+        "tuning_ops/host_proxy_manager.h",
+        "tuning_ops/tunable_matmul.h",
+    ],
+    deps = ["//third_party/eigen3", ":libpta"] + DYNAMIC_DEPS + mkl_deps(),
+)
+
 tf_cuda_library(
     name = "fused_embedding_common_cuh",
     hdrs = ["fused_embedding/fused_embedding_common.cu.h"],
