@@ -413,10 +413,6 @@ if __name__ == '__main__':
         raise ValueError('[ERROR] taobao_train_data or taobao_test_data does not exist '
                          'in the given data_location. Please provide valid path')
 
-    if not os.path.exists(args.output_dir):
-        raise ValueError(f'[ERROR] output dir: {args.output_dir} does not exist. '
-                         'Please provide valid path')
-
     # set params
     # set batch size & steps
     batch_size = args.batch_size
