@@ -172,20 +172,20 @@ class DeepFM():
         final_dnn_scope = tf.variable_scope('final_dnn')
         with final_dnn_scope.keep_weights(dtype=tf.float32) if self.bf16 \
                 else final_dnn_scope:
-            net = self._dnn(all_input, self._final_hidden_units, 'final_dnn')
+            dnn_logits = self._dnn(all_input, self._final_hidden_units, 'final_dnn')
 
         if self.bf16:
-            net = tf.cast(net, dtype=tf.float32)
+            dnn_logits = tf.cast(dnn_logits, dtype=tf.float32)
 
-        net = tf.layers.dense(net, units=1)
-        self.predict = tf.math.sigmoid(net)
-        self.output = tf.round(self.predict)
+        self._logits = tf.layers.dense(dnn_logits, units=1)
+        self.probability = tf.math.sigmoid(self._logits)
+        self.output = tf.round(self.probability)
 
     # compute loss
     def _create_loss(self):
         loss_func = tf.losses.mean_squared_error
-        self.predict = tf.squeeze(self.predict)
-        self.loss = tf.math.reduce_mean(loss_func(self._label, self.predict))
+        predict = tf.squeeze(self.probability)
+        self.loss = tf.math.reduce_mean(loss_func(self._label, predict))
         tf.summary.scalar('loss', self.loss)
 
     # define optimizer and generate train_op
@@ -224,7 +224,7 @@ class DeepFM():
         self.acc, self.acc_op = tf.metrics.accuracy(labels=self._label,
                                                     predictions=self.output)
         self.auc, self.auc_op = tf.metrics.auc(labels=self._label,
-                                               predictions=self.predict,
+                                               predictions=self.probability,
                                                num_thresholds=1000)
         tf.summary.scalar('eval_acc', self.acc)
         tf.summary.scalar('eval_auc', self.auc)
@@ -254,7 +254,6 @@ def build_model_input(filename, batch_size, num_epochs):
         files = work_queue.input_dataset()
     else:
         files = filename
-
     # Extract lines from input files using the Dataset API.
     dataset = tf.data.TextLineDataset(files)
     dataset = dataset.shuffle(buffer_size=20000,
@@ -403,7 +402,7 @@ def train(sess_config,
             save_summaries_steps=args.save_steps,
             config=sess_config) as sess:
         while not sess.should_stop():
-            _, train_loss = sess.run([model.loss, model.train_op])
+            sess.run([model.loss, model.train_op])
     print("Training completed.")
 
 
@@ -439,7 +438,6 @@ def main(tf_config=None, server=None):
     print('Checking dataset')
     train_file = args.data_location + '/train.csv'
     test_file = args.data_location + '/eval.csv'
-
     if (not os.path.exists(train_file)) or (not os.path.exists(test_file)):
         print("Dataset does not exist in the given data_location.")
         sys.exit()
@@ -499,19 +497,6 @@ def main(tf_config=None, server=None):
         min_slice_size=args.dense_layer_partitioner <<
         10) if args.dense_layer_partitioner else None
 
-    # create model
-    model = DeepFM(wide_column=wide_column,
-                   fm_column=fm_column,
-                   deep_column=deep_column,
-                   optimizer_type=args.optimizer,
-                   learning_rate=args.learning_rate,
-                   bf16=args.bf16,
-                   stock_tf=args.tf,
-                   adaptive_emb=args.adaptive_emb,
-                   inputs=next_element,
-                   input_layer_partitioner=input_layer_partitioner,
-                   dense_layer_partitioner=dense_layer_partitioner)
-
     # Session config
     sess_config = tf.ConfigProto()
     sess_config.inter_op_parallelism_threads = args.inter
@@ -531,6 +516,19 @@ def main(tf_config=None, server=None):
     if args.micro_batch and not args.tf:
         '''Auto Mirco Batch'''
         sess_config.graph_options.optimizer_options.micro_batch_num = args.micro_batch
+
+    # create model
+    model = DeepFM(wide_column=wide_column,
+                   fm_column=fm_column,
+                   deep_column=deep_column,
+                   optimizer_type=args.optimizer,
+                   learning_rate=args.learning_rate,
+                   bf16=args.bf16,
+                   stock_tf=args.tf,
+                   adaptive_emb=args.adaptive_emb,
+                   inputs=next_element,
+                   input_layer_partitioner=input_layer_partitioner,
+                   dense_layer_partitioner=dense_layer_partitioner)
 
     # Run model training and evaluation
     train(sess_config, hooks, model, train_init_op, train_steps,
@@ -628,11 +626,11 @@ def get_arg_parser():
     parser.add_argument('--smartstaged',
                         help='Whether to enable smart staged feature of DeepRec, Default to True.',
                         type=boolean_string,
-                        default=False)  # TODO: Default to be True
+                        default=True)
     parser.add_argument('--emb_fusion',
                         help='Whether to enable embedding fusion, Default to True.',
                         type=boolean_string,
-                        default=False)  # TODO: Default to be True
+                        default=True)
     parser.add_argument('--ev',
                         help='Whether to enable DeepRec EmbeddingVariable. Default False.',
                         type=boolean_string,
@@ -650,11 +648,11 @@ def get_arg_parser():
     parser.add_argument('--op_fusion',
                         help='Whether to enable Auto graph fusion feature. Default to True',
                         type=boolean_string,
-                        default=True)  # TODO: Default to be True
+                        default=True)
     parser.add_argument('--micro_batch',
                         help='Set num for Auto Mirco Batch. Default close.',
                         type=int,
-                        default=0)  # TODO: Default to be True
+                        default=0)
     parser.add_argument('--adaptive_emb',
                         help='Whether to enable Adaptive Embedding. Default to False.',
                         type=boolean_string,
@@ -662,7 +660,7 @@ def get_arg_parser():
     parser.add_argument('--dynamic_ev',
                         help='Whether to enable Dynamic-dimension Embedding Variable. Default to False.',
                         type=boolean_string,
-                        default=False)  # TODO: enable
+                        default=False)
     parser.add_argument('--incremental_ckpt',
                         help='Set time of save Incremental Checkpoint. Default 0 to close.',
                         type=boolean_string,
@@ -744,7 +742,7 @@ def set_env_for_DeepRec():
         Please preload libjemalloc.so by `LD_PRELOAD=./libjemalloc.so.2 python ...`
     '''
     os.environ['START_STATISTIC_STEP'] = '100'
-    os.environ['STOP_STATISTIC_STEP'] = '200'
+    os.environ['STOP_STATISTIC_STEP'] = '110'
     os.environ['MALLOC_CONF'] = \
         'background_thread:true,metadata_thp:auto,dirty_decay_ms:20000,muzzy_decay_ms:20000'
 
