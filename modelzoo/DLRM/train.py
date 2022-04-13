@@ -77,7 +77,7 @@ class DLRM():
 
         self.tf = stock_tf
         self.bf16 = False if self.tf else bf16
-        self._is_training = True
+        self.is_training = True
         self._adaptive_emb = adaptive_emb
 
         self._mlp_bot = mlp_bot
@@ -97,10 +97,10 @@ class DLRM():
             self._create_optimizer()
             self._create_metrics()
 
-    # used to add summary in tensorboard    
+    # used to add summary in tensorboard
     def _add_layer_summary(self, value, tag):
         tf.summary.scalar('%s/fraction_of_zero_values' % tag,
-                        tf.nn.zero_fraction(value))
+                          tf.nn.zero_fraction(value))
         tf.summary.histogram('%s/activation' % tag, value)
 
     def _dot_op(self, features):
@@ -150,7 +150,7 @@ class DLRM():
             partitioner=self._dense_layer_partitioner,
             reuse=tf.AUTO_REUSE)
         with mlp_bot_scope.keep_weights(dtype=tf.float32) if self.bf16 \
-            else mlp_bot_scope:
+                else mlp_bot_scope:
             if self.bf16:
                 dense_inputs = tf.cast(dense_inputs, dtype=tf.bfloat16)
 
@@ -165,79 +165,71 @@ class DLRM():
                         name=mlp_bot_hidden_layer_scope)
                     dense_inputs = tf.layers.batch_normalization(
                         dense_inputs,
-                        training=self._is_training,
+                        training=self.is_training,
                         trainable=True)
                     self._add_layer_summary(dense_inputs,
-                                      mlp_bot_hidden_layer_scope.name)
+                                            mlp_bot_hidden_layer_scope.name)
             if self.bf16:
                 dense_inputs = tf.cast(dense_inputs, dtype=tf.float32)
 
-        #interaction_op
+        # interaction_op
         if self.interaction_op == 'dot':
             # dot op
             with tf.variable_scope('Op_dot_layer', reuse=tf.AUTO_REUSE):
-                net = [dense_inputs]
+                mlp_input = [dense_inputs]
                 for cols in self._sparse_column:
-                    net.append(column_tensors[cols])
-                net = tf.stack(net, axis=1)
-                net = self._dot_op(net)
-                net = tf.concat([dense_inputs, net], 1)
+                    mlp_input.append(column_tensors[cols])
+                mlp_input = tf.stack(mlp_input, axis=1)
+                mlp_input = self._dot_op(mlp_input)
+                mlp_input = tf.concat([dense_inputs, mlp_input], 1)
         elif self.interaction_op == 'cat':
-            net = tf.concat([dense_inputs, sparse_inputs], 1)
+            mlp_input = tf.concat([dense_inputs, sparse_inputs], 1)
 
         # top MLP before output
         if self.bf16:
-            net = tf.cast(net, dtype=tf.bfloat16)
+            mlp_input = tf.cast(mlp_input, dtype=tf.bfloat16)
         mlp_top_scope = tf.variable_scope(
             'mlp_top_layer',
             partitioner=self._dense_layer_partitioner,
             reuse=tf.AUTO_REUSE)
         with mlp_top_scope.keep_weights(dtype=tf.float32) if self.bf16 \
-            else mlp_top_scope:
+                else mlp_top_scope:
             for layer_id, num_hidden_units in enumerate(self._mlp_top):
                 with tf.variable_scope(
                         'mlp_top_hiddenlayer_%d' % layer_id,
                         reuse=tf.AUTO_REUSE) as mlp_top_hidden_layer_scope:
-                    net = tf.layers.dense(net,
+                    mlp_logits = tf.layers.dense(mlp_input,
                                           units=num_hidden_units,
                                           activation=tf.nn.relu,
                                           name=mlp_top_hidden_layer_scope)
 
-                self._add_layer_summary(net, mlp_top_hidden_layer_scope.name)
+                self._add_layer_summary(mlp_logits, mlp_top_hidden_layer_scope.name)
 
         if self.bf16:
-            net = tf.cast(net, dtype=tf.float32)
+            mlp_logits = tf.cast(mlp_logits, dtype=tf.float32)
 
         with tf.variable_scope('logits', reuse=tf.AUTO_REUSE) as logits_scope:
-            net = tf.layers.dense(net,
-                                  units=1,
-                                  activation=None,
-                                  name=logits_scope)
-            net = tf.math.sigmoid(net)
+            self._logits = tf.layers.dense(mlp_logits,
+                                           units=1,
+                                           activation=None,
+                                           name=logits_scope)
+            self.probability = tf.math.sigmoid(self._logits)
+            self.output = tf.round(self.probability)
 
-            self._add_layer_summary(net, logits_scope.name)
-
-        self._predict = net
+            self._add_layer_summary(self.probability, logits_scope.name)
 
     # compute loss
+
     def _create_loss(self):
-        bce_loss_func = tf.keras.losses.BinaryCrossentropy()
-        self._predict = tf.squeeze(self._predict)
-        self.loss = tf.math.reduce_mean(bce_loss_func(self._label, self._predict))
+        loss_func = tf.keras.losses.BinaryCrossentropy()
+        predict = tf.squeeze(self.probability)
+        self.loss = tf.math.reduce_mean(loss_func(self._label, predict))
         tf.summary.scalar('loss', self.loss)
 
     # define optimizer and generate train_op
     def _create_optimizer(self):
         self.global_step = tf.train.get_or_create_global_step()
-        if self.tf or self._optimizer_type == 'gradientdescent':
-            optimizer = tf.train.GradientDescentOptimizer(
-                learning_rate=self._learning_rate)
-        elif self._optimizer_type == 'adagrad':
-            optimizer = tf.train.AdagradOptimizer(
-                learning_rate=self._learning_rate,
-                initial_accumulator_value=0.1,
-                use_locking=False)
-        elif self._optimizer_type == 'adam':
+        if self.tf or self._optimizer_type == 'adam':
             optimizer = tf.train.AdamOptimizer(
                 learning_rate=self._learning_rate,
                 beta1=0.9,
@@ -253,19 +245,27 @@ class DLRM():
             optimizer = tf.train.AdagradDecayOptimizer(
                 learning_rate=self._learning_rate,
                 global_step=self.global_step)
+        elif self._optimizer_type == 'adagrad':
+            optimizer = tf.train.AdagradOptimizer(
+                learning_rate=self._learning_rate,
+                initial_accumulator_value=0.1,
+                use_locking=False)
+        elif self._optimizer_type == 'gradientdescent':
+            optimizer = tf.train.GradientDescentOptimizer(
+                learning_rate=self._learning_rate)
         else:
             raise ValueError("Optimzier type error.")
 
-        self.train_op = optimizer.minimize(self.loss, global_step=self.global_step)
+        self.train_op = optimizer.minimize(
+            self.loss, global_step=self.global_step)
 
     # compute acc & auc
     def _create_metrics(self):
         self.acc, self.acc_op = tf.metrics.accuracy(labels=self._label,
-                                                    predictions=tf.round(
-                                                        self._predict))
+                                                    predictions=self.output)
         self.auc, self.auc_op = tf.metrics.auc(labels=self._label,
-                                                predictions=self._predict,
-                                                num_thresholds=1000)
+                                               predictions=self.probability,
+                                               num_thresholds=1000)
         tf.summary.scalar('eval_acc', self.acc)
         tf.summary.scalar('eval_auc', self.auc)
 
@@ -535,19 +535,6 @@ def main(tf_config=None, server=None):
         min_slice_size=args.dense_layer_partitioner <<
         10) if args.dense_layer_partitioner else None
 
-    # create model
-    model = DLRM(dense_column=dense_column,
-                 sparse_column=sparse_column,
-                 learning_rate=args.learning_rate,
-                 optimizer_type=args.optimizer,
-                 bf16=args.bf16,
-                 stock_tf=args.tf,
-                 adaptive_emb=args.adaptive_emb,
-                 interaction_op=args.interaction_op,
-                 inputs=next_element,
-                 input_layer_partitioner=input_layer_partitioner,
-                 dense_layer_partitioner=dense_layer_partitioner)
-
     # Session config
     sess_config = tf.ConfigProto()
     sess_config.inter_op_parallelism_threads = args.inter
@@ -567,6 +554,19 @@ def main(tf_config=None, server=None):
     if args.micro_batch and not args.tf:
         '''Auto Mirco Batch'''
         sess_config.graph_options.optimizer_options.micro_batch_num = args.micro_batch
+
+    # create model
+    model = DLRM(dense_column=dense_column,
+                 sparse_column=sparse_column,
+                 learning_rate=args.learning_rate,
+                 optimizer_type=args.optimizer,
+                 bf16=args.bf16,
+                 stock_tf=args.tf,
+                 adaptive_emb=args.adaptive_emb,
+                 interaction_op=args.interaction_op,
+                 inputs=next_element,
+                 input_layer_partitioner=input_layer_partitioner,
+                 dense_layer_partitioner=dense_layer_partitioner)
 
     # Run model training and evaluation
     train(sess_config, hooks, model, train_init_op, train_steps,
@@ -614,9 +614,10 @@ def get_arg_parser():
                         type=int,
                         default=2021)
     parser.add_argument('--optimizer',
-                        type=str, \
-                        choices=['gradientdescent', 'adam', 'adamasync', 'adagraddecay', 'adagrad'],
-                        default='adam') 
+                        type=str,
+                        choices=['adam', 'adamasync', 'adagraddecay',
+                                 'adagrad', 'gradientdescent'],
+                        default='adamasync')
     parser.add_argument('--learning_rate',
                         help='Learning rate for model',
                         type=float,
@@ -663,52 +664,52 @@ def get_arg_parser():
                         help='slice size of dense layer partitioner. units KB',
                         type=int,
                         default=16)
-    parser.add_argument('--tf', \
+    parser.add_argument('--tf',
                         help='Use TF 1.15.5 API and disable DeepRec feature to run a baseline.',
                         action='store_true')
-    parser.add_argument('--smartstaged', \
+    parser.add_argument('--smartstaged',
                         help='Whether to enable smart staged feature of DeepRec, Default to True.',
                         type=boolean_string,
-                        default=False) #TODO: Defautl to True
-    parser.add_argument('--emb_fusion', \
+                        default=True)
+    parser.add_argument('--emb_fusion',
                         help='Whether to enable embedding fusion, Default to True.',
                         type=boolean_string,
-                        default=False) #TODO: Defautl to True
-    parser.add_argument('--ev', \
+                        default=True)
+    parser.add_argument('--ev',
                         help='Whether to enable DeepRec EmbeddingVariable. Default False.',
                         type=boolean_string,
                         default=False)
-    parser.add_argument('--ev_elimination', \
+    parser.add_argument('--ev_elimination',
                         help='Feature Elimination of EmbeddingVariable Feature. Default closed.',
                         type=str,
                         choices=[None, 'l2', 'gstep'],
                         default=None)
-    parser.add_argument('--ev_filter', \
+    parser.add_argument('--ev_filter',
                         help='Feature Filter of EmbeddingVariable Feature. Default closed.',
                         type=str,
                         choices=[None, 'counter', 'cbf'],
                         default=None)
-    parser.add_argument('--op_fusion', \
+    parser.add_argument('--op_fusion',
                         help='Whether to enable Auto graph fusion feature. Default to True',
                         type=boolean_string,
                         default=True)
     parser.add_argument('--micro_batch',
                         help='Set num for Auto Mirco Batch. Default close.',
                         type=int,
-                        default=0)  #TODO: Default to be True
-    parser.add_argument('--adaptive_emb', \
+                        default=0)
+    parser.add_argument('--adaptive_emb',
                         help='Whether to enable Adaptive Embedding. Default to False.',
                         type=boolean_string,
                         default=False)
-    parser.add_argument('--dynamic_ev', \
+    parser.add_argument('--dynamic_ev',
                         help='Whether to enable Dynamic-dimension Embedding Variable. Default to False.',
                         type=boolean_string,
-                        default=False) #TODO:enable
-    parser.add_argument('--incremental_ckpt', \
+                        default=False)
+    parser.add_argument('--incremental_ckpt',
                         help='Set time of save Incremental Checkpoint. Default 0 to close.',
                         type=int,
                         default=0)
-    parser.add_argument('--workqueue', \
+    parser.add_argument('--workqueue',
                         help='Whether to enable Work Queue. Default to False.',
                         type=boolean_string,
                         default=False)
@@ -786,7 +787,7 @@ def set_env_for_DeepRec():
     '''
     os.environ['START_STATISTIC_STEP'] = '100'
     os.environ['STOP_STATISTIC_STEP'] = '110'
-    os.environ['MALLOC_CONF']= \
+    os.environ['MALLOC_CONF'] = \
         'background_thread:true,metadata_thp:auto,dirty_decay_ms:20000,muzzy_decay_ms:20000'
 
 
