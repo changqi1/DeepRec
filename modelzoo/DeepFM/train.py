@@ -105,7 +105,7 @@ class DeepFM():
 
     def _dnn(self, dnn_input, dnn_hidden_units=None, layer_name=''):
         for layer_id, num_hidden_units in enumerate(dnn_hidden_units):
-            with tf.variable_scope(layer_name + "_%d" % layer_id,
+            with tf.variable_scope(layer_name + '_%d' % layer_id,
                                    partitioner=self._dense_layer_partitioner,
                                    reuse=tf.AUTO_REUSE) as dnn_layer_scope:
                 dnn_input = tf.layers.dense(
@@ -125,12 +125,7 @@ class DeepFM():
         with tf.variable_scope('input_layer',
                                partitioner=self._input_layer_partitioner,
                                reuse=tf.AUTO_REUSE):
-
             fm_cols = {}
-            wide_input = tf.feature_column.input_layer(
-                self._feature, self._wide_column, cols_to_output_tensors=fm_cols)
-            fm_input = tf.stack([fm_cols[cols] for cols in self._fm_column], 1)
-
             if self._adaptive_emb and not self.tf:
                 '''Adaptive Embedding Feature Part 1 of 2'''
                 adaptive_mask_tensors = {}
@@ -141,9 +136,15 @@ class DeepFM():
                     features=self._feature,
                     feature_columns=self._deep_column,
                     adaptive_mask_tensors=adaptive_mask_tensors)
+                wide_input = tf.feature_column.input_layer(
+                self._feature, self._wide_column, cols_to_output_tensors=fm_cols, adaptive_mask_tensors=adaptive_mask_tensors)
             else:
                 dnn_input = tf.feature_column.input_layer(self._feature,
                                                           self._deep_column)
+                wide_input = tf.feature_column.input_layer(
+                self._feature, self._wide_column, cols_to_output_tensors=fm_cols)
+
+            fm_input = tf.stack([fm_cols[cols] for cols in self._fm_column], 1)
 
         if self.bf16:
             wide_input = tf.cast(wide_input, dtype=tf.bfloat16)
@@ -235,7 +236,7 @@ def build_model_input(filename, batch_size, num_epochs):
     def parse_csv(value):
         tf.logging.info('Parsing {}'.format(filename))
         cont_defaults = [[0.0] for i in range(1, 14)]
-        cate_defaults = [[" "] for i in range(1, 27)]
+        cate_defaults = [[' '] for i in range(1, 27)]
         label_defaults = [[0]]
         column_headers = TRAIN_DATA_COLUMNS
         record_defaults = label_defaults + cont_defaults + cate_defaults
@@ -322,7 +323,7 @@ def build_feature_columns():
                 elif args.dynamic_ev:
                     '''Dynamic-dimension Embedding Variable'''
                     print(
-                        "Dynamic-dimension Embedding Variable isn't real enabled in model."
+                        "Dynamic-dimension Embedding Variable is not really enabled in model."
                     )
                     sys.exit()
 
@@ -387,7 +388,7 @@ def train(sess_config,
         save_incremental_checkpoint_secs=args.incremental_ckpt)`
     '''
     if args.incremental_ckpt and not args.tf:
-        print("Incremental_Checkpoint is not real enabled.")
+        print("Incremental_Checkpoint is not really enabled.")
         print("Please see the comments in the code.")
         sys.exit()
 
@@ -419,7 +420,7 @@ def eval(sess_config, input_hooks, model, data_init_op, steps, checkpoint_dir):
     merged = tf.summary.merge_all()
 
     with tf.train.MonitoredSession(session_creator=session_creator,
-                                   hooks=None) as sess:
+                                   hooks=hooks) as sess:
         for _in in range(1, steps + 1):
             if (_in != steps):
                 sess.run([model.acc_op, model.auc_op])
@@ -577,7 +578,7 @@ def get_arg_parser():
                         help='set the random seed for tensorflow',
                         type=int,
                         default=2021)
-    parser.add_argument("--optimizer",
+    parser.add_argument('--optimizer',
                         type=str,
                         choices=['adam', 'adamasync',
                                  'adagraddecay', 'adagrad'],
@@ -652,7 +653,7 @@ def get_arg_parser():
     parser.add_argument('--micro_batch',
                         help='Set num for Auto Mirco Batch. Default close.',
                         type=int,
-                        default=0)
+                        default=0) # TODO enable
     parser.add_argument('--adaptive_emb',
                         help='Whether to enable Adaptive Embedding. Default to False.',
                         type=boolean_string,
@@ -660,7 +661,7 @@ def get_arg_parser():
     parser.add_argument('--dynamic_ev',
                         help='Whether to enable Dynamic-dimension Embedding Variable. Default to False.',
                         type=boolean_string,
-                        default=False)
+                        default=False) # TODO enable
     parser.add_argument('--incremental_ckpt',
                         help='Set time of save Incremental Checkpoint. Default 0 to close.',
                         type=boolean_string,

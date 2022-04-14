@@ -127,7 +127,7 @@ input:                                  |               |
       - `--seed`: Set the random seed for tensorflow.
       - `--timeline`: Save steps of profile hooks to record timeline, zero to close, defualt to 0.
       - `--keep_checkpoint_max`: Maximum number of recent checkpoint to keep. Default to 1.
-      - `learning_rate`: Learning rate for deep network. Default to 0.001.
+      - `--learning_rate`: Learning rate for deep network. Default to 0.001.
       - `--inter`: Set inter op parallelism threads. Default to 0.
       - `--intra`: Set intra op parallelism threads. Default to 0.
       - `--input_layer_partitioner`: Slice size of input layer partitioner(units MB).
