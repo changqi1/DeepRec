@@ -363,7 +363,7 @@ def build_feature_columns():
                 elif args.dynamic_ev:
                     '''Dynamic-dimension Embedding Variable'''
                     print(
-                        "Dynamic-dimension Embedding Variable isn't real enabled in model."
+                        "Dynamic-dimension Embedding Variable isn't really enabled in model."
                     )
                     sys.exit()
 
@@ -425,7 +425,7 @@ def train(sess_config,
         save_incremental_checkpoint_secs=args.incremental_ckpt)`
     '''
     if args.incremental_ckpt and not args.tf:
-        print("Incremental_Checkpoint is not real enabled.")
+        print("Incremental_Checkpoint is not really enabled.")
         print("Please see the comments in the code.")
         sys.exit()
 
@@ -457,7 +457,7 @@ def eval(sess_config, input_hooks, model, data_init_op, steps, checkpoint_dir):
     merged = tf.summary.merge_all()
 
     with tf.train.MonitoredSession(session_creator=session_creator,
-                                   hooks=None) as sess:
+                                   hooks=hooks) as sess:
         for _in in range(1, steps + 1):
             if (_in != steps):
                 sess.run([model.acc_op, model.auc_op])
@@ -696,7 +696,7 @@ def get_arg_parser():
     parser.add_argument('--micro_batch',
                         help='Set num for Auto Mirco Batch. Default close.',
                         type=int,
-                        default=0)
+                        default=0) # TODO enable
     parser.add_argument('--adaptive_emb',
                         help='Whether to enable Adaptive Embedding. Default to False.',
                         type=boolean_string,
@@ -704,7 +704,7 @@ def get_arg_parser():
     parser.add_argument('--dynamic_ev',
                         help='Whether to enable Dynamic-dimension Embedding Variable. Default to False.',
                         type=boolean_string,
-                        default=False)
+                        default=False) # TODO enable
     parser.add_argument('--incremental_ckpt',
                         help='Set time of save Incremental Checkpoint. Default 0 to close.',
                         type=int,

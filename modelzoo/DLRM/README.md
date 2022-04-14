@@ -120,6 +120,7 @@ The triangles represent mlp network. The inputs consists of dense features and s
       - `--timeline`: Save steps of profile hooks to record timeline, zero to close, defualt to 0.
       - `--keep_checkpoint_max`: Maximum number of recent checkpoint to keep. Default to 1.
       - `--learning_rate`: Learning rate for network. Default to 0.1.
+      - `--interaction_op`: Choose interaction op before top MLP layer('dot', 'cat'). Default to cat.
       - `--inter`: Set inter op parallelism threads. Default to 0.
       - `--intra`: Set intra op parallelism threads. Default to 0.
       - `--input_layer_partitioner`: Slice size of input layer partitioner(units MB).
