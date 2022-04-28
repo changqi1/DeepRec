@@ -95,7 +95,7 @@ input:
     - `--keep_checkpoint_max`: Maximum number of recent checkpoint to keep. Default is `1`.
     - `--bf16`: Enable DeepRec BF16 feature in DeepRec. Use FP32 by default.
     - `--no_eval`: Do not evaluate trained model by eval dataset. Evaluating model by default.
-    - `--protocol`: Set the protocol("grpc", "grpc++", "star_server") used when starting server in distributed training. Default is `grpc`.
+    - `--protocol`: Set the protocol('grpc', 'grpc++', 'star_server') used when starting server in distributed training. Default is `grpc`.
     - `--inter`: Set inter op parallelism threads. Default is `0`.
     - `--intra`: Set intra op parallelism threads. Default is `0`.
     - `--input_layer_partitioner`: Slice size of input layer partitioner(units MB). Default is `0`.

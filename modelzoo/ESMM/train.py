@@ -363,7 +363,7 @@ def train(sess_config,
             config=sess_config) as sess:
         while not sess.should_stop():
             sess.run([model.loss, model.train_op])
-    print("Training completed.")
+    print('Training completed.')
 
 
 def eval(sess_config, input_hooks, model, test_init_op, test_steps, output_dir, checkpoint_dir):
@@ -392,7 +392,7 @@ def eval(sess_config, input_hooks, model, test_init_op, test_steps, output_dir, 
 
 def main(tf_config=None, server=None):
     # check dataset and count data set size
-    print("Checking dataset...")
+    print('Checking dataset...')
     train_file = os.path.join(args.data_location, 'taobao_train_data')
     test_file = os.path.join(args.data_location, 'taobao_test_data')
     if not os.path.exists(args.data_location):
@@ -540,7 +540,7 @@ def get_arg_parser():
                         action='store_true')
     parser.add_argument('--protocol',
                         type=str,
-                        choices=['grpc'],
+                        choices=['grpc', 'grpc++', 'star_server'],
                         default='grpc')
     parser.add_argument('--inter',
                         help='set inter op parallelism threads',
