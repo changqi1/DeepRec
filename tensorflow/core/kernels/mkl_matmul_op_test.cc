@@ -84,6 +84,8 @@ static Graph* Matmul(const string& kind, int m, int k, int n, bool transpose_a, 
   BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 4);  \
   BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 8);  \
   BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 16);  \
+  BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 32);  \
+  BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 48);  \
 
 #define BM_Matmul(M, K, N, TA, TB)               \
   BM_Matmul_NTH(M, K, N, TA, TB, float, cpu);    \
@@ -196,12 +198,26 @@ BM_Matmul(2560, 1040, 1536, false, false);
 BM_Matmul(2560, 14435, 2304, false, false);
 */
 
-
 BM_Matmul(20000, 2316, 256, false, false);
+BM_Matmul(20000, 256, 2316, false, true);
+BM_Matmul(2316, 20000, 256, true, false);
+
 BM_Matmul(20000, 256, 128, false, false);
+BM_Matmul(20000, 128, 256, false, true);
+BM_Matmul(256, 20000, 128, true, false);
+
 BM_Matmul(20000, 129, 1, false, false);
+BM_Matmul(20000, 1, 129, false, true);
+BM_Matmul(129, 20000, 1, true, false);
+
 BM_Matmul(20000, 2316, 1, false, false);
+BM_Matmul(20000, 1, 2316, false, true);
+BM_Matmul(2316, 20000, 1, true, false);
+
+
 BM_Matmul(20000, 2316, 10, false, false);
+BM_Matmul(20000, 10, 2316, false, true);
+BM_Matmul(2316, 20000, 10, true, false);
 
 /*
 BM_Matmul(14435, 2560, 2304, true, false);

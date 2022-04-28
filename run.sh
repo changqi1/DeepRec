@@ -30,7 +30,7 @@ test_opts="--nocache_test_results \
 test_options="--test_arg=--benchmarks=all"
 
 # test with amx512-bf16
-bazel test --run_under="numactl -C 56-71" --test_env ONEDNN_MAX_CPU_ISA=AVX512_CORE_AMX ${default_opts} ${mkl_opts} ${test_opts} ${test_options} -- //tensorflow/core/kernels:mkl_matmul_op_test |tee  mkl_matmul_with_amx.log
+bazel test --run_under="numactl -C 48-71" --test_env ONEDNN_MAX_CPU_ISA=AVX512_CORE_AMX ${default_opts} ${mkl_opts} ${test_opts} ${test_options} -- //tensorflow/core/kernels:mkl_matmul_op_test |tee  mkl_matmul_with_amx.log
 
 # test with avx512-bf16
-bazel test --run_under="numactl -C 56-71" --test_env ONEDNN_MAX_CPU_ISA=AVX512_CORE_BF16 ${default_opts} ${mkl_opts} ${test_opts} ${test_options} -- //tensorflow/core/kernels:mkl_matmul_op_test |tee  mkl_matmul_with_avx.log
+bazel test --run_under="numactl -C 48-71" --test_env ONEDNN_MAX_CPU_ISA=AVX512_CORE_BF16 ${default_opts} ${mkl_opts} ${test_opts} ${test_options} -- //tensorflow/core/kernels:mkl_matmul_op_test |tee  mkl_matmul_with_avx.log
