@@ -13,12 +13,12 @@ import time
 tf.logging.set_verbosity(tf.logging.INFO)
 print(f'Using TensorFlow version {tf.__version__}')
 
-INPUT_COLUMN = [
-    'clk', 'buy', 'pid', 'adgroup_id', 'cate_id', 'campaign_id', 'customer',
-    'brand', 'user_id', 'cms_segid', 'cms_group_id', 'final_gender_code',
-    'age_level', 'pvalue_level', 'shopping_level', 'occupation',
-    'new_user_class_level', 'tag_category_list', 'tag_brand_list', 'price'
-]
+@tf.custom_gradient
+def round_with_gradients(x):
+    def grad(dy):
+        return dy
+    return tf.round(x), grad
+
 USER_COLUMN = [
     'user_id', 'cms_segid', 'cms_group_id', 'age_level', 'pvalue_level',
     'shopping_level', 'occupation', 'new_user_class_level'
@@ -29,86 +29,44 @@ ITEM_COLUMN = [
 COMBO_COLUMN = [
     'pid', 'tag_category_list', 'tag_brand_list'
 ]
-LABEL_COLUMN = ['clk', 'buy']
+LABEL_COLUMNS = ['clk', 'buy']
 TAG_COLUMN = ['tag_category_list', 'tag_brand_list']
-INPUT_FEATURES = {
-    'pid': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 10
-    },
-    'adgroup_id': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 100000
-    },
-    'cate_id': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 10000
-    },
-    'campaign_id': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 100000
-    },
-    'customer': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 100000
-    },
-    'brand': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 100000
-    },
-    'user_id': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 100000
-    },
-    'cms_segid': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 100
-    },
-    'cms_group_id': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 100
-    },
-    'final_gender_code': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 10
-    },
-    'age_level': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 10
-    },
-    'pvalue_level': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 10
-    },
-    'shopping_level': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 10
-    },
-    'occupation': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 10
-    },
-    'new_user_class_level': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 10
-    },
-    'tag_category_list': {
-        'type': 'TagFeature',
-        'hash_bucket_size': 100000
-    },
-    'tag_brand_list': {
-        'type': 'TagFeature',
-        'hash_bucket_size': 100000
-    },
-    'price': {
-        'type': 'IdFeature',
-        'hash_bucket_size': 50
-        # 'num_buckets': 50
-        # num_buckets is more consistent with easy rec's
-        # implementation but outputs lower AUC for earlier steps
-    },
-}
 
+HASH_INPUTS = [
+    'pid', 'adgroup_id', 'cate_id', 'campaign_id', 'customer', 'brand',
+    'user_id', 'cms_segid', 'cms_group_id', 'final_gender_code', 'age_level',
+    'pvalue_level', 'shopping_level', 'occupation', 'new_user_class_level',
+    'tag_category_list', 'tag_brand_list'
+]
+
+IDENTITY_INPUTS = ['price']
+
+HASH_BUCKET_SIZES = {
+        'pid': 10,
+        'adgroup_id': 100000,
+        'cate_id': 10000,
+        'campaign_id': 100000,
+        'customer': 100000,
+        'brand': 100000,
+        'user_id': 100000,
+        'cms_segid': 100,
+        'cms_group_id': 100,
+        'final_gender_code': 10,
+        'age_level': 10,
+        'pvalue_level': 10,
+        'shopping_level': 10,
+        'occupation': 10,
+        'new_user_class_level': 10,
+        'tag_category_list': 100000,
+        'tag_brand_list': 100000,
+        }
+
+NUM_BUCKETS = {
+    'price': 50
+}
+defaults = [[0]] * len(LABEL_COLUMNS) + [[' ']] * len(HASH_INPUTS) + [[0]] * len(IDENTITY_INPUTS)
+ALL_FEATURE_COLUMNS = HASH_INPUTS + IDENTITY_INPUTS
+headers = LABEL_COLUMNS + ALL_FEATURE_COLUMNS
 class ESMM():
     def __init__(self,
                  input,
@@ -221,8 +179,8 @@ class ESMM():
 
     # create model
     def __create_model(self):
-        #for key in TAG_COLUMN:
-        #    self.feature[key] = tf.strings.split(self.feature[key], '|')
+        for key in TAG_COLUMN:
+            self.feature[key] = tf.strings.split(self.feature[key], '|')
 
         with tf.variable_scope('user_input_layer',
                                partitioner=self.__input_layer_partitioner,
@@ -278,7 +236,7 @@ class ESMM():
             pCVR = self.__build_cvr_model(concat)
             pCTR = self.__build_ctr_model(concat)
 
-            pCTCVR = tf.cast(tf.multiply(pCVR, pCTR), tf.float32)
+            pCTCVR = tf.cast(tf.multiply(round_with_gradients(pCVR), round_with_gradients(pCTR)), tf.float32)
         return pCTCVR
 
     def __build_cvr_model(self, net):
@@ -315,16 +273,10 @@ class ESMM():
 def build_model_input(filename, batch_size, num_epochs, seed):
     def parse_csv(value):
         tf.logging.info('Parsing {}'.format(filename))
-        string_defaults = [[' '] for i in range(1, 19)]
-        label_defaults = [[0], [0]]
-        column_headers = INPUT_COLUMN
-        record_defaults = label_defaults + string_defaults
-        columns = tf.io.decode_csv(value, record_defaults=record_defaults)
-        all_columns = collections.OrderedDict(zip(column_headers, columns))
-        labels = [all_columns.pop(LABEL_COLUMN[0]), all_columns.pop(LABEL_COLUMN[1])]
+        columns = tf.io.decode_csv(value, record_defaults=defaults)
+        all_columns = collections.OrderedDict(zip(headers, columns))
+        labels = [all_columns.pop(LABEL_COLUMNS[0]), all_columns.pop(LABEL_COLUMNS[1])]
         label = tf.multiply(labels[0], labels[1])
-        # Line below is required if 'price' is using num_buckets
-        # all_columns['price'] = tf.strings.to_number(all_columns['price'], out_type=tf.int32)
         features = all_columns
         return features, label
 
@@ -333,7 +285,7 @@ def build_model_input(filename, batch_size, num_epochs, seed):
             .repeat(num_epochs)
             .prefetch(32)
             .batch(batch_size)
-            .map(parse_csv, num_parallel_calls=28)
+            .map(parse_csv, num_parallel_calls=tf.data.experimental.AUTOTUNE)
             .prefetch(1))
 
 # generate feature columns
@@ -341,25 +293,29 @@ def build_feature_columns():
     user_column = []
     item_column = []
     combo_column = []
-    for key in INPUT_FEATURES:
-        # Lines below is required if 'price' is using num_buckets
-        # if key == 'price':
-        #    categorical_column = tf.feature_column.categorical_column_with_identity(
-        #        key,
-        #        num_buckets=INPUT_FEATURES[key]['num_buckets'])
-        # else:
-        categorical_column = tf.feature_column.categorical_column_with_hash_bucket(
-                key,
-                hash_bucket_size=INPUT_FEATURES[key]['hash_bucket_size'],
+    for column_name in ALL_FEATURE_COLUMNS:
+        if column_name in HASH_INPUTS:
+            categorical_column = tf.feature_column.categorical_column_with_hash_bucket(
+                column_name,
+                hash_bucket_size=HASH_BUCKET_SIZES[column_name],
                 dtype=tf.string)
-        embedding_column = tf.feature_column.embedding_column(categorical_column,
-                                                              dimension=16,
-                                                              combiner='mean')
-        if key in USER_COLUMN:
+
+            embedding_column = tf.feature_column.embedding_column(categorical_column,
+                                                   dimension=16,
+                                                   combiner='mean')
+        elif column_name in IDENTITY_INPUTS:
+            column = tf.feature_column.categorical_column_with_identity(column_name, NUM_BUCKETS[column_name])
+            embedding_column = tf.feature_column.embedding_column(column,
+                                                   dimension=16,
+                                                   combiner='mean')
+        else:
+            raise ValueError('Unexpected column name occured')
+
+        if column_name in USER_COLUMN:
             user_column.append(embedding_column)
-        elif key in ITEM_COLUMN:
+        elif column_name in ITEM_COLUMN:
             item_column.append(embedding_column)
-        elif key in COMBO_COLUMN:
+        elif column_name in COMBO_COLUMN:
             combo_column.append(embedding_column)
 
     return user_column, item_column, combo_column
