@@ -78,7 +78,9 @@ class ESMM():
                  combo_mlp=[128, 96, 64, 32],
                  cvr_mlp=[128, 96, 64, 32, 16],
                  ctr_mlp=[128, 96, 64, 32, 16],
+                 optimizer_type='adam',
                  bf16=False,
+                 stock_tf=None,
                  learning_rate=0.1,
                  l2_scale=1e-6,
                  input_layer_partitioner=None,
@@ -97,9 +99,11 @@ class ESMM():
         self.__cvr_mlp = cvr_mlp
         self.__ctr_mlp = ctr_mlp
 
+        self.__optimizer_type = optimizer_type
         self.__learning_rate = learning_rate
         self.__l2_regularization = self.__l2_regularizer(l2_scale) if l2_scale else None
-        self.__bf16 = bf16
+        self.__tf = stock_tf
+        self.__bf16 = False if self.__tf else bf16
 
         self.__input_layer_partitioner = input_layer_partitioner
         self.__dense_layer_partitioner = dense_layer_partitioner
@@ -107,7 +111,7 @@ class ESMM():
         self.feature = input[0]
         self.label = input[1]
 
-        self.model = self.__create_model()
+        self.__create_model()
 
         with tf.name_scope('head'):
             self.__create_loss()
@@ -122,24 +126,45 @@ class ESMM():
 
     # compute loss
     def __create_loss(self):
+        # self.__logits = tf.squeeze(self.__logits)
+        # self.loss = tf.losses.sigmoid_cross_entropy(
+        #     self.label,
+        #     self.__logits,
+        #     scope='loss',
+        #     reduction=tf.losses.Reduction.SUM_OVER_BATCH_SIZE)
+        # tf.summary.scalar('loss', self.loss)
         bce_loss_func = tf.keras.losses.BinaryCrossentropy()
-        self.model = tf.squeeze(self.model)
-        self.loss = tf.math.reduce_mean(bce_loss_func(self.label, self.model))
+        self.output = tf.squeeze(self.probability)
+        self.loss = tf.math.reduce_mean(bce_loss_func(self.label, self.probability))
         tf.summary.scalar('loss', self.loss)
 
     # define optimizer and generate train_op
     def __create_optimizer(self):
         self.global_step = tf.train.get_or_create_global_step()
-        optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.__learning_rate)
+        if self.__tf or self.__optimizer_type == 'adam':
+            optimizer = tf.train.AdamOptimizer(
+                learning_rate=self.__learning_rate)
+        elif self.__optimizer_type == 'adamasync':
+            optimizer = tf.train.AdamAsyncOptimizer(learning_rate=self.__learning_rate)
+        elif self.__optimizer_type == 'adagraddecay':
+            optimizer = tf.train.AdagradDecayOptimizer(learning_rate=self.__learning_rate,
+                                                       global_step=self.global_step)
+        else:
+            raise ValueError('Optimizer type error.')
 
-        self.train_op = optimizer.minimize(self.loss, global_step=self.global_step)
+        gradients = optimizer.compute_gradients(self.loss)
+        clipped_gradients = [(tf.clip_by_norm(grad, 5), var)
+                             for grad, var in gradients if grad is not None]
+
+        self.train_op = optimizer.apply_gradients(clipped_gradients,
+                                                  global_step=self.global_step)
 
     # compute acc & auc
     def __create_metrics(self):
         self.acc, self.acc_op = tf.metrics.accuracy(labels=self.label,
-                                                    predictions=tf.round(self.model))
+                                                    predictions=self.output)
         self.auc, self.auc_op = tf.metrics.auc(labels=self.label,
-                                               predictions=self.model,
+                                               predictions=self.probability,
                                                num_thresholds=1000)
         tf.summary.scalar('eval_acc', self.acc)
         tf.summary.scalar('eval_auc', self.auc)
@@ -237,7 +262,8 @@ class ESMM():
             pCTR = self.__build_ctr_model(concat)
 
             pCTCVR = tf.cast(tf.multiply(round_with_gradients(pCVR), round_with_gradients(pCTR)), tf.float32)
-        return pCTCVR
+            self.probability = pCTCVR
+            self.output = tf.round(self.probability)
 
     def __build_cvr_model(self, net):
         with tf.variable_scope('cvr_mlp',
@@ -475,6 +501,7 @@ def main(tf_config=None, server=None):
                  user_column,
                  item_column,
                  combo_column,
+                 optimizer_type=args.optimizer,
                  bf16=args.bf16,
                  learning_rate=args.learning_rate,
                  l2_scale=args.l2_regularization,
@@ -558,6 +585,13 @@ def get_arg_parser():
                         help='slice size of dense layer partitioner. units KB',
                         type=int,
                         default=0)
+    parser.add_argument('--tf',
+                        help='Use TF 1.15.5 API and disable DeepRec feature to run a baseline.',
+                        action='store_true')
+    parser.add_argument('--optimizer', type=str,
+                        choices=['adam', 'adamasync', 'adagraddecay',
+                                 'adagrad', 'gradientdescent'],
+                        default='adamasync')
     return parser
 
 # Parse distributed training configuration and generate cluster information
@@ -633,12 +667,18 @@ def set_env_for_DeepRec():
     os.environ['MALLOC_CONF'] = \
         'background_thread:true,metadata_thp:auto,dirty_decay_ms:20000,muzzy_decay_ms:20000'
 
+def check_stock_tf():
+    import pkg_resources
+    detailed_version = pkg_resources.get_distribution('Tensorflow').version
+    return not ('deeprec' in detailed_version)
+
 if __name__ == '__main__':
     parser = get_arg_parser()
     args = parser.parse_args()
 
-    #if not args.tf:
-    #    set_env_for_DeepRec()
+    stock_tf = args.tf if args.tf else check_stock_tf()
+    if stock_tf:
+        set_env_for_DeepRec()
 
     TF_CONFIG = os.getenv('TF_CONFIG')
     if not TF_CONFIG:
