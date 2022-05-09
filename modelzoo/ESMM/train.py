@@ -13,12 +13,6 @@ import time
 tf.logging.set_verbosity(tf.logging.INFO)
 print(f'Using TensorFlow version {tf.__version__}')
 
-@tf.custom_gradient
-def round_with_gradients(x):
-    def grad(dy):
-        return dy
-    return tf.round(x), grad
-
 USER_COLUMN = [
     'user_id', 'cms_segid', 'cms_group_id', 'age_level', 'pvalue_level',
     'shopping_level', 'occupation', 'new_user_class_level'
@@ -58,7 +52,7 @@ HASH_BUCKET_SIZES = {
         'occupation': 10,
         'new_user_class_level': 10,
         'tag_category_list': 100000,
-        'tag_brand_list': 100000,
+        'tag_brand_list': 100000
         }
 
 NUM_BUCKETS = {
@@ -126,15 +120,8 @@ class ESMM():
 
     # compute loss
     def __create_loss(self):
-        # self.__logits = tf.squeeze(self.__logits)
-        # self.loss = tf.losses.sigmoid_cross_entropy(
-        #     self.label,
-        #     self.__logits,
-        #     scope='loss',
-        #     reduction=tf.losses.Reduction.SUM_OVER_BATCH_SIZE)
-        # tf.summary.scalar('loss', self.loss)
         bce_loss_func = tf.keras.losses.BinaryCrossentropy()
-        self.output = tf.squeeze(self.probability)
+        self.probability = tf.squeeze(self.probability)
         self.loss = tf.math.reduce_mean(bce_loss_func(self.label, self.probability))
         tf.summary.scalar('loss', self.loss)
 
@@ -152,12 +139,10 @@ class ESMM():
         else:
             raise ValueError('Optimizer type error.')
 
-        gradients = optimizer.compute_gradients(self.loss)
-        clipped_gradients = [(tf.clip_by_norm(grad, 5), var)
-                             for grad, var in gradients if grad is not None]
-
-        self.train_op = optimizer.apply_gradients(clipped_gradients,
-                                                  global_step=self.global_step)
+        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        with tf.control_dependencies(update_ops):
+            self.train_op = optimizer.minimize(self.loss,
+                                               global_step=self.global_step)
 
     # compute acc & auc
     def __create_metrics(self):
@@ -168,7 +153,6 @@ class ESMM():
                                                num_thresholds=1000)
         tf.summary.scalar('eval_acc', self.acc)
         tf.summary.scalar('eval_auc', self.auc)
-        self.__add_layer_summary(self.acc, self.acc.name)
 
     def __create_dense_layer(self, input, num_hidden_units, activation, layer_name):
         with tf.variable_scope(layer_name, reuse=tf.AUTO_REUSE) as mlp_layer_scope:
@@ -261,7 +245,7 @@ class ESMM():
             pCVR = self.__build_cvr_model(concat)
             pCTR = self.__build_ctr_model(concat)
 
-            pCTCVR = tf.cast(tf.multiply(round_with_gradients(pCVR), round_with_gradients(pCTR)), tf.float32)
+            pCTCVR = tf.cast(tf.multiply(pCVR, pCTR), tf.float32)
             self.probability = pCTCVR
             self.output = tf.round(self.probability)
 
@@ -296,7 +280,7 @@ class ESMM():
         return net
 
 # generate dataset pipline
-def build_model_input(filename, batch_size, num_epochs, seed):
+def build_model_input(filename, batch_size, num_epochs, seed, stock_tf, workqueue=None):
     def parse_csv(value):
         tf.logging.info('Parsing {}'.format(filename))
         columns = tf.io.decode_csv(value, record_defaults=defaults)
@@ -306,36 +290,102 @@ def build_model_input(filename, batch_size, num_epochs, seed):
         features = all_columns
         return features, label
 
-    return (tf.data.TextLineDataset(filename)
+    '''Work Queue Feature'''
+    if not stock_tf and workqueue:
+        from tensorflow.python.ops.work_queue import WorkQueue
+        work_queue = WorkQueue([filename])
+        files = work_queue.input_dataset()
+    else:
+        files = filename
+    return (tf.data.TextLineDataset(files)
             .shuffle(buffer_size=10000, seed=seed)
             .repeat(num_epochs)
-            .prefetch(32)
             .batch(batch_size)
             .map(parse_csv, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-            .prefetch(1))
+            .prefetch(32))
 
 # generate feature columns
-def build_feature_columns():
+def build_feature_columns(stock_tf,
+                          emb_fusion,
+                          emb_variable=None,
+                          emb_var_elimination=None,
+                          emb_var_filter=None,
+                          adaptive_emb=None,
+                          dynamic_emb_var=None):
     user_column = []
     item_column = []
     combo_column = []
     for column_name in ALL_FEATURE_COLUMNS:
-        if column_name in HASH_INPUTS:
-            categorical_column = tf.feature_column.categorical_column_with_hash_bucket(
+        if column_name in IDENTITY_INPUTS:
+            column = tf.feature_column.categorical_column_with_identity(column_name, NUM_BUCKETS[column_name])
+        elif column_name in HASH_INPUTS:
+            column = tf.feature_column.categorical_column_with_hash_bucket(
                 column_name,
                 hash_bucket_size=HASH_BUCKET_SIZES[column_name],
                 dtype=tf.string)
 
-            embedding_column = tf.feature_column.embedding_column(categorical_column,
-                                                   dimension=16,
-                                                   combiner='mean')
-        elif column_name in IDENTITY_INPUTS:
-            column = tf.feature_column.categorical_column_with_identity(column_name, NUM_BUCKETS[column_name])
-            embedding_column = tf.feature_column.embedding_column(column,
-                                                   dimension=16,
-                                                   combiner='mean')
+            if not stock_tf:
+                '''Feature Elimination of EmbeddingVariable Feature'''
+                if emb_var_elimination == 'gstep':
+                    # Feature elimination based on global steps
+                    evict_opt = tf.GlobalStepEvict(steps_to_live=4000)
+                elif emb_var_elimination == 'l2':
+                    # Feature elimination based on l2 weight
+                    evict_opt = tf.L2WeightEvict(l2_weight_threshold=1.0)
+                else:
+                    evict_opt = None
+
+                '''Feature Filter of EmbeddingVariable Feature'''
+                if emb_var_filter == 'cbf':
+                    # CBF-based feature filter
+                    filter_option = tf.CBFFilter(filter_freq=3,
+                                                 max_element_size=2**30,
+                                                 false_positive_probability=0.01,
+                                                 counter_type=tf.int64)
+                elif emb_var_filter == 'counter':
+                    # Counter-based feature filter
+                    filter_option = tf.CounterFilter(filter_freq=3)
+                else:
+                    filter_option = None
+
+                ev_opt = tf.EmbeddingVariableOption(evict_option=evict_opt, filter_option=filter_option)
+
+                if emb_variable:
+                    '''Embedding Variable Feature'''
+                    column = tf.feature_column.categorical_column_with_embedding(column_name,
+                                                                                 dtype=tf.string,
+                                                                                 ev_option=ev_opt)
+                # elif args.adaptive_emb:
+                #     '''                 Adaptive Embedding Feature Part 2 of 2
+                #     Expcet the follow code, a dict, 'adaptive_mask_tensors', is need as the input of
+                #     'tf.feature_column.input_layer(adaptive_mask_tensors=adaptive_mask_tensors)'.
+                #     For column 'COL_NAME',the value of adaptive_mask_tensors['$COL_NAME'] is a int32
+                #     tensor with shape [batch_size].
+                #     '''
+                #     categorical_column = tf.feature_column.categorical_column_with_adaptive_embedding(
+                #         column_name,
+                #         hash_bucket_size=HASH_BUCKET_SIZES[column_name],
+                #         dtype=tf.string,
+                #         ev_option=ev_opt)
+                elif dynamic_emb_var:
+                    '''Dynamic-dimension Embedding Variable'''
+                    raise ValueError('Dynamic-dimension Embedding Variable is not enabled in the model')
+
+                print(column)
         else:
             raise ValueError('Unexpected column name occured')
+
+        if not stock_tf and emb_fusion:
+            '''Embedding Fusion Feature'''
+            embedding_column = tf.feature_column.embedding_column(column,
+                                                                  dimension=16,
+                                                                  combiner='mean',
+                                                                  do_fusion=emb_fusion)
+        else:
+            embedding_column = tf.feature_column.embedding_column(column,
+                                                       dimension=16,
+                                                       combiner='mean')
+
 
         if column_name in USER_COLUMN:
             user_column.append(embedding_column)
@@ -357,7 +407,9 @@ def train(sess_config,
           timeline_steps=None,
           no_eval=None,
           tf_config=None,
-          server=None):
+          server=None,
+          stock_tf=None,
+          incremental_ckpt=None):
     hooks = []
     hooks.extend(input_hooks)
 
@@ -368,7 +420,8 @@ def train(sess_config,
     stop_hook = tf.train.StopAtStepHook(last_step=train_steps)
     log_hook = tf.train.LoggingTensorHook(
         {'steps': model.global_step,
-         'loss': model.loss}, every_n_iter=100)
+         'loss': model.loss
+        }, every_n_iter=100)
     hooks.append(stop_hook)
     hooks.append(log_hook)
 
@@ -377,18 +430,43 @@ def train(sess_config,
                                            output_dir=checkpoint_dir))
     save_ckp_steps = save_steps if save_steps or no_eval else train_steps
 
-    with tf.train.MonitoredTrainingSession(
-            master=server.target if server else '',
-            is_chief=tf_config['is_chief'] if tf_config else True,
-            hooks=hooks,
-            scaffold=scaffold,
-            checkpoint_dir=checkpoint_dir,
-            save_checkpoint_steps=save_ckp_steps,
-            summary_dir=checkpoint_dir,
-            save_summaries_steps=save_steps,
-            config=sess_config) as sess:
-        while not sess.should_stop():
-            sess.run([model.loss, model.train_op])
+    '''
+                            Incremental_Checkpoint
+    To enable Incremental_Checkpoint please `save_incremental_checkpoint_secs`
+    in 'tf.train.MonitoredTrainingSession' checkpoint_dir must be defined. By default
+    save_incremental_checkpoint_secs is None. Incremental_save checkpoint time
+    in seconds can be set to use incremental checkpoint function, like
+    `tf.train.MonitoredTrainingSession(save_incremental_checkpoint_secs=args.incremental_ckpt)`
+    '''
+    if not stock_tf and incremental_ckpt:
+        raise ValueError('Incremental_Checkpoint has not been enabled yet.' \
+                         'Please see comments in the code.')
+        # with tf.train.MonitoredTrainingSession(
+        #         master=server.target if server else '',
+        #         is_chief=tf_config['is_chief'] if tf_config else True,
+        #         hooks=hooks,
+        #         scaffold=scaffold,
+        #         checkpoint_dir=checkpoint_dir,
+        #         save_checkpoint_steps=save_ckp_steps,
+        #         summary_dir=checkpoint_dir,
+        #         save_summaries_steps=save_steps,
+        #         config=sess_config,
+        #         save_incremental_checkpoint_secs=incremental_ckpt) as sess:
+        #     while not sess.should_stop():
+        #         sess.run([model.loss, model.train_op])
+    else:
+        with tf.train.MonitoredTrainingSession(
+                master=server.target if server else '',
+                is_chief=tf_config['is_chief'] if tf_config else True,
+                hooks=hooks,
+                scaffold=scaffold,
+                checkpoint_dir=checkpoint_dir,
+                save_checkpoint_steps=save_ckp_steps,
+                summary_dir=checkpoint_dir,
+                save_summaries_steps=save_steps,
+                config=sess_config) as sess:
+            while not sess.should_stop():
+                sess.run([model.loss, model.train_op])
     print('Training completed.')
 
 
@@ -416,7 +494,7 @@ def eval(sess_config, input_hooks, model, test_init_op, test_steps, output_dir, 
                 print(f'Evaluation complete:[{_in}/{test_steps}]')
                 print(f'ACC = {eval_acc}\nAUC = {eval_auc}')
 
-def main(tf_config=None, server=None):
+def main(stock_tf, tf_config=None, server=None):
     # check dataset and count data set size
     print('Checking dataset...')
     train_file = os.path.join(args.data_location, 'taobao_train_data')
@@ -433,7 +511,9 @@ def main(tf_config=None, server=None):
     no_of_test_examples = sum(1 for _ in open(test_file))
 
     # set batch size, eporch & steps
-    batch_size = args.batch_size
+    batch_size = math.ceil(
+                  args.batch_size / args.micro_batch
+                  ) if args.micro_batch and not stock_tf else args.batch_size
     if args.steps == 0:
         no_epochs = 10
         train_steps = math.ceil(
@@ -444,6 +524,8 @@ def main(tf_config=None, server=None):
         train_steps = args.steps
     test_steps = math.ceil(float(no_of_test_examples) / batch_size)
 
+    print(f'Number of batch size: {batch_size}')
+
     print(f'Numbers of training dataset: {no_of_training_examples}')
     print(f'Number of epochs: {no_epochs}')
     print(f'Number of train steps: {train_steps}')
@@ -451,27 +533,37 @@ def main(tf_config=None, server=None):
     print(f'Numbers of test dataset: {no_of_test_examples}')
     print(f'Numbers of test steps: {test_steps}')
 
+    if not stock_tf:
+        print('Optimizations')
+        print(f'\tNumber of micro batches: {args.micro_batch}')
+        print(f'\tEmbedding Fusion Feature: {args.emb_fusion}')
+        print(f'\tSmartStage Feature: {args.smartstaged}')
+        print(f'\tAuto Graph Fusion: {args.op_fusion}')
+        print(f'\tEmbeddingVariable: {args.ev}')
+        print(f'\tFeature Elimination of EmbeddingVariable Feature: {args.ev_elimination}')
+        print(f'\tFeature Filter of EmbeddingVariable Feature: {args.ev_filter}')
+        print(f'\tAdaptive Embedding: {args.adaptive_emb}')
+        print(f'\tDynamic-dimension Embedding Variable: {args.dynamic_ev}')
+        print(f'\tIncremental Checkpoint: {args.incremental_ckpt}')
+        print(f'\tWorkQueue: {args.workqueue}')
+    print(f'Used optimizer: {args.optimizer}')
+
     # set fixed random seed
     SEED = args.seed
     tf.set_random_seed(SEED)
 
     # set directory path for checkpoint_dir
-    output_dir = os.path.join(args.output_dir, 'model_ESMM_' + str(int(time.time())))
-    print(f'Saving model events to {args.output_dir}')
-
     keep_checkpoint_max = args.keep_checkpoint_max
-    checkpoint_dir = args.checkpoint_dir
-    if args.checkpoint_dir:
-        print(f'Saving checkpoint to {args.checkpoint_dir}. '
-              f'Maximum number of saved checkpoints: {keep_checkpoint_max}')
-    elif not args.checkpoint_dir and args.save_steps:
-        print(f'Saving checkpoint to {args.output_dir}. '
-              f'Maximum number of saved checkpoints: {keep_checkpoint_max}')
-        checkpoint_dir = args.output_dir
+    model_dir = os.path.join(args.output_dir, 'model_ESMM_' + str(int(time.time())))
+    checkpoint_dir = args.checkpoint_dir if args.checkpoint_dir else model_dir
+    print(f'Saving model events to {checkpoint_dir}')
+
+    if keep_checkpoint_max:
+        print(f'Maximum number of saved checkpoints: {keep_checkpoint_max}')
 
     # create data pipline of train & test dataset
-    train_dataset = build_model_input(train_file, batch_size, no_epochs, SEED)
-    test_dataset = build_model_input(test_file, batch_size, 1, SEED)
+    train_dataset = build_model_input(train_file, batch_size, no_epochs, SEED, stock_tf, args.workqueue)
+    test_dataset = build_model_input(test_file, batch_size, 1, SEED, stock_tf, args.workqueue)
 
     iterator = tf.data.Iterator.from_structure(train_dataset.output_types,
                                                train_dataset.output_shapes)
@@ -481,10 +573,15 @@ def main(tf_config=None, server=None):
     test_init_op = iterator.make_initializer(test_dataset)
 
     # create feature column
-    user_column, item_column, combo_column = build_feature_columns()
+    user_column, item_column, combo_column = build_feature_columns(stock_tf,
+                                                                   args.emb_fusion,
+                                                                   args.ev,
+                                                                   args.ev_elimination,
+                                                                   args.ev_filter,
+                                                                   args.adaptive_emb,
+                                                                   args.dynamic_ev)
 
     # create variable partitioner for distributed training
-    num_ps_replicas = len(tf_config['ps_hosts']) if tf_config else 0
     num_ps_replicas = len(tf_config['ps_hosts']) if tf_config else 0
     input_layer_partitioner = partitioned_variables.min_max_variable_partitioner(
                                 max_partitions=num_ps_replicas,
@@ -516,16 +613,36 @@ def main(tf_config=None, server=None):
     # Session hook
     hooks = []
 
+    if args.smartstaged and not stock_tf:
+        '''SmartStage Feature'''
+        next_element = tf.staged(next_element, num_threads=8, capacity=40)
+        sess_config.graph_options.optimizer_options.do_smart_stage = True
+        hooks.append(tf.make_prefetch_hook())
+    if args.op_fusion and not stock_tf:
+        '''Auto Graph Fusion'''
+        sess_config.graph_options.optimizer_options.do_op_fusion = True
+    if args.micro_batch and not stock_tf:
+        '''Auto Micro Batch'''
+        sess_config.graph_options.optimizer_options.micro_batch_num = args.micro_batch
+
     # Run model training and evaluation
     train(sess_config, hooks, model, train_init_op, train_steps,
-          keep_checkpoint_max, checkpoint_dir, args.save_steps, args.timeline, args.no_eval, tf_config, server)
+          keep_checkpoint_max, checkpoint_dir, args.save_steps,
+          args.timeline, args.no_eval, tf_config, server,
+          stock_tf, args.incremental_ckpt)
     if not (args.no_eval or tf_config):
         eval(sess_config, hooks, model, test_init_op, test_steps,
-             output_dir, checkpoint_dir)
+             model_dir, checkpoint_dir)
+
+def boolean_string(string):
+    low_string = string.lower()
+    if low_string not in {'false', 'true'}:
+        raise ValueError('Not a valid boolean string')
+    return low_string == 'true'
 
 def get_arg_parser():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--seed', help='set random seed', type=int, default=2021)
+    parser.add_argument('--seed', help='set random seed', type=int, default=2020)
     parser.add_argument('--data_location',
                         help='Full path of train data',
                         default='./data')
@@ -588,10 +705,58 @@ def get_arg_parser():
     parser.add_argument('--tf',
                         help='Use TF 1.15.5 API and disable DeepRec feature to run a baseline.',
                         action='store_true')
+    '''Enabled By Default DeepRec optimizations'''
+    parser.add_argument('--smartstaged', \
+                        help='Whether to enable SmartStage feature of DeepRec',
+                        type=boolean_string,
+                        default=False)
+    parser.add_argument('--emb_fusion', \
+                        help='Whether to enable embedding fusion',
+                        type=boolean_string,
+                        default=True)
+    parser.add_argument('--op_fusion', \
+                        help='Whether to enable Auto graph fusion feature',
+                        type=boolean_string,
+                        default=True)
+    parser.add_argument('--micro_batch',
+                        help='Set number for Auto Micro Batch',
+                        type=int,
+                        default=2)
     parser.add_argument('--optimizer', type=str,
                         choices=['adam', 'adamasync', 'adagraddecay',
                                  'adagrad', 'gradientdescent'],
                         default='adamasync')
+    '''Optional DeepRec optimizations'''
+    parser.add_argument('--ev', \
+                        help='Whether to enable DeepRec EmbeddingVariable',
+                        type=boolean_string,
+                        default=False)
+    parser.add_argument('--ev_elimination', \
+                        help='Feature Elimination of EmbeddingVariable Feature',
+                        type=str,
+                        choices=[None, 'l2', 'gstep'],
+                        default=None)
+    parser.add_argument('--ev_filter', \
+                        help='Feature Filter of EmbeddingVariable Feature',
+                        type=str,
+                        choices=[None, 'counter', 'cbf'],
+                        default=None)
+    parser.add_argument('--adaptive_emb', \
+                        help='Whether to enable Adaptive Embedding',
+                        type=boolean_string,
+                        default=False)
+    parser.add_argument('--dynamic_ev', \
+                        help='Whether to enable Dynamic-dimension Embedding Variable',
+                        type=boolean_string,
+                        default=False)
+    parser.add_argument('--incremental_ckpt', \
+                        help='Set time[in seconds] of save Incremental Checkpoint',
+                        type=int,
+                        default=None)
+    parser.add_argument('--workqueue', \
+                        help='Whether to enable WorkQueue',
+                        type=boolean_string,
+                        default=False)
     return parser
 
 # Parse distributed training configuration and generate cluster information
@@ -683,7 +848,7 @@ if __name__ == '__main__':
     TF_CONFIG = os.getenv('TF_CONFIG')
     if not TF_CONFIG:
         print('Running stand-alone mode training')
-        main()
+        main(stock_tf)
     else:
         tf_config, server, tf_device = generate_cluster_info(TF_CONFIG)
-        main(tf_config, server)
+        main(stock_tf, tf_config, server)
