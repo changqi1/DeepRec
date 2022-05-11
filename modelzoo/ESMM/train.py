@@ -30,10 +30,8 @@ HASH_INPUTS = [
     'pid', 'adgroup_id', 'cate_id', 'campaign_id', 'customer', 'brand',
     'user_id', 'cms_segid', 'cms_group_id', 'final_gender_code', 'age_level',
     'pvalue_level', 'shopping_level', 'occupation', 'new_user_class_level',
-    'tag_category_list', 'tag_brand_list'
+    'tag_category_list', 'tag_brand_list', 'price'
 ]
-
-IDENTITY_INPUTS = ['price']
 
 HASH_BUCKET_SIZES = {
         'pid': 10,
@@ -52,14 +50,12 @@ HASH_BUCKET_SIZES = {
         'occupation': 10,
         'new_user_class_level': 10,
         'tag_category_list': 100000,
-        'tag_brand_list': 100000
+        'tag_brand_list': 100000,
+        'price': 50
         }
 
-NUM_BUCKETS = {
-    'price': 50
-}
-defaults = [[0]] * len(LABEL_COLUMNS) + [[' ']] * len(HASH_INPUTS) + [[0]] * len(IDENTITY_INPUTS)
-ALL_FEATURE_COLUMNS = HASH_INPUTS + IDENTITY_INPUTS
+defaults = [[0]] * len(LABEL_COLUMNS) + [[' ']] * len(HASH_INPUTS)
+ALL_FEATURE_COLUMNS = HASH_INPUTS
 headers = LABEL_COLUMNS + ALL_FEATURE_COLUMNS
 class ESMM():
     def __init__(self,
@@ -72,9 +68,11 @@ class ESMM():
                  combo_mlp=[128, 96, 64, 32],
                  cvr_mlp=[128, 96, 64, 32, 16],
                  ctr_mlp=[128, 96, 64, 32, 16],
+                 batch_size=None,
                  optimizer_type='adam',
                  bf16=False,
                  stock_tf=None,
+                 adaptive_emb=False,
                  learning_rate=0.1,
                  l2_scale=1e-6,
                  input_layer_partitioner=None,
@@ -92,11 +90,13 @@ class ESMM():
         self.__combo_mlp = combo_mlp
         self.__cvr_mlp = cvr_mlp
         self.__ctr_mlp = ctr_mlp
+        self.__batch_size = batch_size
 
         self.__optimizer_type = optimizer_type
         self.__learning_rate = learning_rate
         self.__l2_regularization = self.__l2_regularizer(l2_scale) if l2_scale else None
         self.__tf = stock_tf
+        self.__adaptive_emb = adaptive_emb
         self.__bf16 = False if self.__tf else bf16
 
         self.__input_layer_partitioner = input_layer_partitioner
@@ -188,24 +188,59 @@ class ESMM():
 
     # create model
     def __create_model(self):
-        for key in TAG_COLUMN:
-            self.feature[key] = tf.strings.split(self.feature[key], '|')
-
         with tf.variable_scope('user_input_layer',
                                partitioner=self.__input_layer_partitioner,
                                reuse=tf.AUTO_REUSE):
-            user_emb = tf.feature_column.input_layer(self.feature,
-                                                     self.__user_column)
+            if not self.__tf and self.__adaptive_emb:
+                '''Adaptive Embedding Feature Part 1 of 2'''
+                adaptive_mask_tensors = {}
+                for col in USER_COLUMN:
+                    print(col)
+                    adaptive_mask_tensors[col] = tf.ones([self.__batch_size],
+                                                         tf.int32)
+                user_emb = tf.feature_column.input_layer(
+                    self.feature,
+                    self.__user_column,
+                    adaptive_mask_tensors=adaptive_mask_tensors)
+            else:
+                user_emb = tf.feature_column.input_layer(self.feature,
+                                                         self.__user_column)
         with tf.variable_scope('item_input_layer',
                                partitioner=self.__input_layer_partitioner,
                                reuse=tf.AUTO_REUSE):
-            item_emb = tf.feature_column.input_layer(self.feature,
-                                                     self.__item_column)
+            if not self.__tf and self.__adaptive_emb:
+                '''Adaptive Embedding Feature Part 1 of 2'''
+                adaptive_mask_tensors = {}
+                for col in ITEM_COLUMN:
+                    print(col)
+                    adaptive_mask_tensors[col] = tf.ones([self.__batch_size],
+                                                         tf.int32)
+                item_emb = tf.feature_column.input_layer(
+                    self.feature,
+                    self.__item_column,
+                    adaptive_mask_tensors=adaptive_mask_tensors)
+            else:
+                item_emb = tf.feature_column.input_layer(self.feature,
+                                                         self.__item_column)
         with tf.variable_scope('combo_input_layer',
                                partitioner=self.__input_layer_partitioner,
                                reuse=tf.AUTO_REUSE):
-            combo_emb = tf.feature_column.input_layer(self.feature,
-                                                     self.__combo_column)
+            if not self.__tf and self.__adaptive_emb:
+                '''Adaptive Embedding Feature Part 1 of 2'''
+                adaptive_mask_tensors = {}
+                for col in COMBO_COLUMN:
+                    print(col)
+                    adaptive_mask_tensors[col] = tf.ones([self.__batch_size],
+                                                         tf.int32)
+                combo_emb = tf.feature_column.input_layer(
+                    self.feature,
+                    self.__combo_column,
+                    adaptive_mask_tensors=adaptive_mask_tensors)
+            else:
+                for key in TAG_COLUMN:
+                    self.feature[key] = tf.strings.split(self.feature[key], '|')
+                combo_emb = tf.feature_column.input_layer(self.feature,
+                                                          self.__combo_column)
 
         with self.__make_scope('ESMM', self.__bf16):
             if self.__bf16:
@@ -316,64 +351,57 @@ def build_feature_columns(stock_tf,
     item_column = []
     combo_column = []
     for column_name in ALL_FEATURE_COLUMNS:
-        if column_name in IDENTITY_INPUTS:
-            column = tf.feature_column.categorical_column_with_identity(column_name, NUM_BUCKETS[column_name])
-        elif column_name in HASH_INPUTS:
-            column = tf.feature_column.categorical_column_with_hash_bucket(
-                column_name,
-                hash_bucket_size=HASH_BUCKET_SIZES[column_name],
-                dtype=tf.string)
+        column = tf.feature_column.categorical_column_with_hash_bucket(
+            column_name,
+            hash_bucket_size=HASH_BUCKET_SIZES[column_name],
+            dtype=tf.string)
 
-            if not stock_tf:
-                '''Feature Elimination of EmbeddingVariable Feature'''
-                if emb_var_elimination == 'gstep':
-                    # Feature elimination based on global steps
-                    evict_opt = tf.GlobalStepEvict(steps_to_live=4000)
-                elif emb_var_elimination == 'l2':
-                    # Feature elimination based on l2 weight
-                    evict_opt = tf.L2WeightEvict(l2_weight_threshold=1.0)
-                else:
-                    evict_opt = None
+        if not stock_tf:
+            '''Feature Elimination of EmbeddingVariable Feature'''
+            if emb_var_elimination == 'gstep':
+                # Feature elimination based on global steps
+                evict_opt = tf.GlobalStepEvict(steps_to_live=4000)
+            elif emb_var_elimination == 'l2':
+                # Feature elimination based on l2 weight
+                evict_opt = tf.L2WeightEvict(l2_weight_threshold=1.0)
+            else:
+                evict_opt = None
 
-                '''Feature Filter of EmbeddingVariable Feature'''
-                if emb_var_filter == 'cbf':
-                    # CBF-based feature filter
-                    filter_option = tf.CBFFilter(filter_freq=3,
-                                                 max_element_size=2**30,
-                                                 false_positive_probability=0.01,
-                                                 counter_type=tf.int64)
-                elif emb_var_filter == 'counter':
-                    # Counter-based feature filter
-                    filter_option = tf.CounterFilter(filter_freq=3)
-                else:
-                    filter_option = None
+            '''Feature Filter of EmbeddingVariable Feature'''
+            if emb_var_filter == 'cbf':
+                # CBF-based feature filter
+                filter_option = tf.CBFFilter(filter_freq=3,
+                                             max_element_size=2**30,
+                                             false_positive_probability=0.01,
+                                             counter_type=tf.int64)
+            elif emb_var_filter == 'counter':
+                # Counter-based feature filter
+                filter_option = tf.CounterFilter(filter_freq=3)
+            else:
+                filter_option = None
 
-                ev_opt = tf.EmbeddingVariableOption(evict_option=evict_opt, filter_option=filter_option)
+            ev_opt = tf.EmbeddingVariableOption(evict_option=evict_opt, filter_option=filter_option)
 
-                if emb_variable:
-                    '''Embedding Variable Feature'''
-                    column = tf.feature_column.categorical_column_with_embedding(column_name,
-                                                                                 dtype=tf.string,
-                                                                                 ev_option=ev_opt)
-                # elif args.adaptive_emb:
-                #     '''                 Adaptive Embedding Feature Part 2 of 2
-                #     Expcet the follow code, a dict, 'adaptive_mask_tensors', is need as the input of
-                #     'tf.feature_column.input_layer(adaptive_mask_tensors=adaptive_mask_tensors)'.
-                #     For column 'COL_NAME',the value of adaptive_mask_tensors['$COL_NAME'] is a int32
-                #     tensor with shape [batch_size].
-                #     '''
-                #     categorical_column = tf.feature_column.categorical_column_with_adaptive_embedding(
-                #         column_name,
-                #         hash_bucket_size=HASH_BUCKET_SIZES[column_name],
-                #         dtype=tf.string,
-                #         ev_option=ev_opt)
-                elif dynamic_emb_var:
-                    '''Dynamic-dimension Embedding Variable'''
-                    raise ValueError('Dynamic-dimension Embedding Variable is not enabled in the model')
-
-                print(column)
-        else:
-            raise ValueError('Unexpected column name occured')
+            if emb_variable:
+                '''Embedding Variable Feature'''
+                column = tf.feature_column.categorical_column_with_embedding(column_name,
+                                                                             dtype=tf.string,
+                                                                             ev_option=ev_opt)
+            elif adaptive_emb:
+                '''                 Adaptive Embedding Feature Part 2 of 2
+                Except the following code, a dict, 'adaptive_mask_tensors', is needede as the input of
+                'tf.feature_column.input_layer(adaptive_mask_tensors=adaptive_mask_tensors)'.
+                For column 'COL_NAME',the value of adaptive_mask_tensors['$COL_NAME'] is an int32
+                tensor with shape [batch_size].
+                '''
+                column = tf.feature_column.categorical_column_with_adaptive_embedding(
+                    column_name,
+                    hash_bucket_size=HASH_BUCKET_SIZES[column_name],
+                    dtype=tf.string,
+                    ev_option=ev_opt)
+            elif dynamic_emb_var:
+                '''Dynamic-dimension Embedding Variable'''
+                raise ValueError('Dynamic-dimension Embedding Variable is not enabled in the model')
 
         if not stock_tf and emb_fusion:
             '''Embedding Fusion Feature'''
@@ -515,7 +543,7 @@ def main(stock_tf, tf_config=None, server=None):
                   args.batch_size / args.micro_batch
                   ) if args.micro_batch and not stock_tf else args.batch_size
     if args.steps == 0:
-        no_epochs = 10
+        no_epochs = 1
         train_steps = math.ceil(
             (float(no_epochs) * no_of_training_examples) / batch_size)
     else:
@@ -546,7 +574,8 @@ def main(stock_tf, tf_config=None, server=None):
         print(f'\tDynamic-dimension Embedding Variable: {args.dynamic_ev}')
         print(f'\tIncremental Checkpoint: {args.incremental_ckpt}')
         print(f'\tWorkQueue: {args.workqueue}')
-    print(f'Used optimizer: {args.optimizer}')
+    temp_optimizer = 'adam' if stock_tf else args.optimizer
+    print(f'Used optimizer: {temp_optimizer}')
 
     # set fixed random seed
     SEED = args.seed
@@ -598,8 +627,11 @@ def main(stock_tf, tf_config=None, server=None):
                  user_column,
                  item_column,
                  combo_column,
+                 batch_size=batch_size,
                  optimizer_type=args.optimizer,
                  bf16=args.bf16,
+                 stock_tf=stock_tf,
+                 adaptive_emb=args.adaptive_emb,
                  learning_rate=args.learning_rate,
                  l2_scale=args.l2_regularization,
                  input_layer_partitioner=input_layer_partitioner,
