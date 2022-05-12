@@ -195,7 +195,6 @@ class ESMM():
                 '''Adaptive Embedding Feature Part 1 of 2'''
                 adaptive_mask_tensors = {}
                 for col in USER_COLUMN:
-                    print(col)
                     adaptive_mask_tensors[col] = tf.ones([self.__batch_size],
                                                          tf.int32)
                 user_emb = tf.feature_column.input_layer(
@@ -212,7 +211,6 @@ class ESMM():
                 '''Adaptive Embedding Feature Part 1 of 2'''
                 adaptive_mask_tensors = {}
                 for col in ITEM_COLUMN:
-                    print(col)
                     adaptive_mask_tensors[col] = tf.ones([self.__batch_size],
                                                          tf.int32)
                 item_emb = tf.feature_column.input_layer(
@@ -229,7 +227,6 @@ class ESMM():
                 '''Adaptive Embedding Feature Part 1 of 2'''
                 adaptive_mask_tensors = {}
                 for col in COMBO_COLUMN:
-                    print(col)
                     adaptive_mask_tensors[col] = tf.ones([self.__batch_size],
                                                          tf.int32)
                 combo_emb = tf.feature_column.input_layer(
@@ -621,22 +618,6 @@ def main(stock_tf, tf_config=None, server=None):
                                 min_slice_size=args.dense_layer_partitioner <<
                                     10) if args.dense_layer_partitioner else None
 
-
-    # create model
-    model = ESMM(next_element,
-                 user_column,
-                 item_column,
-                 combo_column,
-                 batch_size=batch_size,
-                 optimizer_type=args.optimizer,
-                 bf16=args.bf16,
-                 stock_tf=stock_tf,
-                 adaptive_emb=args.adaptive_emb,
-                 learning_rate=args.learning_rate,
-                 l2_scale=args.l2_regularization,
-                 input_layer_partitioner=input_layer_partitioner,
-                 dense_layer_partitioner=dense_layer_partitioner)
-
     # Session config
     sess_config = tf.ConfigProto()
     sess_config.inter_op_parallelism_threads = args.inter
@@ -656,6 +637,21 @@ def main(stock_tf, tf_config=None, server=None):
     if args.micro_batch and not stock_tf:
         '''Auto Micro Batch'''
         sess_config.graph_options.optimizer_options.micro_batch_num = args.micro_batch
+
+    # create model
+    model = ESMM(next_element,
+                 user_column,
+                 item_column,
+                 combo_column,
+                 batch_size=batch_size,
+                 optimizer_type=args.optimizer,
+                 bf16=args.bf16,
+                 stock_tf=stock_tf,
+                 adaptive_emb=args.adaptive_emb,
+                 learning_rate=args.learning_rate,
+                 l2_scale=args.l2_regularization,
+                 input_layer_partitioner=input_layer_partitioner,
+                 dense_layer_partitioner=dense_layer_partitioner)
 
     # Run model training and evaluation
     train(sess_config, hooks, model, train_init_op, train_steps,
@@ -741,7 +737,7 @@ def get_arg_parser():
     parser.add_argument('--smartstaged', \
                         help='Whether to enable SmartStage feature of DeepRec',
                         type=boolean_string,
-                        default=False)
+                        default=True)
     parser.add_argument('--emb_fusion', \
                         help='Whether to enable embedding fusion',
                         type=boolean_string,
@@ -753,7 +749,7 @@ def get_arg_parser():
     parser.add_argument('--micro_batch',
                         help='Set number for Auto Micro Batch',
                         type=int,
-                        default=2)
+                        default=0)
     parser.add_argument('--optimizer', type=str,
                         choices=['adam', 'adamasync', 'adagraddecay',
                                  'adagrad', 'gradientdescent'],
