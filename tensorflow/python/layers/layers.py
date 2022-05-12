@@ -78,4 +78,10 @@ from tensorflow.python.layers.normalization import BatchNormalization
 
 from tensorflow.python.layers.normalization import batch_normalization
 
+# Attention layers
+# from tensorflow.python.layers.attention import attention
+from tensorflow.python.layers.attention import self_attention
+from tensorflow.python.layers.attention import multihead_attention
+
+
 # pylint: enable=g-bad-import-order,unused-import

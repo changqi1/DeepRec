@@ -6381,6 +6381,7 @@ py_library(
         "layers/layers.py",
         "layers/normalization.py",
         "layers/pooling.py",
+        "layers/attention.py",
     ],
     srcs_version = "PY2AND3",
     deps = [
