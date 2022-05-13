@@ -1,0 +1,43 @@
+#test image
+deeprec_test_image: cesg-prc-registry.cn-beijing.cr.aliyuncs.com/cesg-ali/deeprec-modelzoo:latest
+tf_test_image: cesg-prc-registry.cn-beijing.cr.aliyuncs.com/cesg-ali/deeprec-modelzoo:tf
+
+#test model
+test_model: 
+  - WDL
+  - DLRM
+  - DeepFM
+  - DSSM
+  - DIEN
+  - DIN
+  
+#batchsize map<model,batchsize>
+model_batchsize:
+  wdl: 512
+  dlrm: 512
+  deepfm: 512
+  dssm: 4096
+  dien: 512
+  din: 512
+  
+#args for deeprec
+modelArgs: 
+
+#tf on/off
+stocktf_test: on
+
+#directory used in the image
+log_dir: /benchmark_result/log/
+checkpoint_dir: /benchmark_result/checkpoint/
+
+#directory in the host
+gol_dir: ./benchmark_result/log/
+pointcheck_dir: ./benchmark_result/checkpoint/
+
+# env config 
+env_var:
+  - export START_STATISTIC_STEP=100
+  - export STOP_STATISTIC_STEP=200
+  - export TF_LAYOUT_PASS_GRAPH_ENABLE_ONLY_WHITE_LIST=1
+  - export TF_LAYOUT_PASS_GRAPH_CAST_FUSION=1
+  - export TF_LAYOUT_PASS_ONLY_WHITE_LIST=1
