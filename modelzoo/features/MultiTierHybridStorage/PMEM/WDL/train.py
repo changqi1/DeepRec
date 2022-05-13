@@ -24,6 +24,8 @@ from tensorflow.python.client import timeline
 import json
 
 from tensorflow.python.ops import partitioned_variables
+from tensorflow.python.ops import variables
+from tensorflow.core.framework.embedding import config_pb2
 
 # Set to INFO for tracking training, default is WARN. ERROR for least messages
 tf.logging.set_verbosity(tf.logging.INFO)
@@ -373,8 +375,38 @@ def build_feature_columns():
                     filter_option = tf.CounterFilter(filter_freq=3)
                 else:
                     filter_option = None
-                ev_opt = tf.EmbeddingVariableOption(
-                    evict_option=evict_opt, filter_option=filter_option)
+                    # MultiTier Mode with DRAM and PMEM
+                if args.ev_mem == 'dram_pmem':
+                    ev_opt = tf.EmbeddingVariableOption(
+                            evict_option=evict_opt, filter_option=filter_option,
+                            storage_option=variables.StorageOption(
+                                storage_type=config_pb2.StorageType.DRAM_PMEM,
+                                storage_path="/mnt/pmem0/pmem_allocator/",
+                                storage_size=768*1024*1024*1024))
+                    # FSDAX Mode in PMEM
+                elif args.ev_mem == 'pmem_libpmem':
+                    ev_opt = tf.EmbeddingVariableOption(
+                            evict_option=evict_opt, filter_option=filter_option,
+                            storage_option=variables.StorageOption(
+                                storage_type=config_pb2.StorageType.PMEM_LIBPMEM,
+                                storage_path="/mnt/pmem0/pmem_allocator/",
+                                storage_size=768*1024*1024*1024))
+
+                    # KMEM DAX Mode in PMEM
+                elif args.ev_mem == "pmem_memkind":
+                    ev_opt = tf.EmbeddingVariableOption(
+                            evict_option=evict_opt, filter_option=filter_option,
+                            storage_option=variables.StorageOption(
+                                storage_type=config_pb2.StorageType.PMEM_MEMKIND))
+                    # DRAM Mode in PMEM
+                else:
+                    ev_opt = tf.EmbeddingVariableOption(
+                            evict_option=evict_opt, filter_option=filter_option,
+                            storage_option=variables.StorageOption(
+                                storage_type=config_pb2.StorageType.DRAM))
+
+               # ev_opt = tf.EmbeddingVariableOption(
+               #     evict_option=evict_opt, filter_option=filter_option)
 
                 if args.ev:
                     '''Embedding Variable Feature'''
@@ -747,6 +779,10 @@ def get_arg_parser():
                         help='Whether to enable Work Queue. Default to False.',
                         type=boolean_string,
                         default=False)
+    parser.add_argument("--ev_mem",
+                        type=str,
+                        choices=["dram", "pmem_libpmem", "dram_pmem", "pmem_memkind"],
+                        default="dram")
     return parser
 
 
