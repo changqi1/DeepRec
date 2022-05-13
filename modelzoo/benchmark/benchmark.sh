@@ -1,42 +1,32 @@
 # script
+
 function make_script()
 {
+    script=$script_path
 
-	IFS_old=$IFS
-	IFS=$'\n'	
-	make_single_script deeprec_bf16 $deeprec_bf16_script
-	make_single_script deeprec_fp32 $deeprec_fp32_script
-	make_single_script tf_fp32 $tf_fp32_script
-	IFS=$IFS_old
-}
-function make_single_script()
-{
-    catg=$1
-    script=$2
+    [[ ! -d $(dirname $script) ]] && mkdir -p $(dirname $script)
+
     bf16_para=
-    if [[ ! -d $(dirname $script) ]];then
-        mkdir -p $(dirname $script)
-    fi
-    if [[ $modelArgs==None ]];then
-        paras=" "
-    else
-        paras=$modelArgs
-    fi    
-    echo "model_list=\$model_list" >>$script
-    [[ $catg != "tf_fp32" ]] &&echo " " >> $script &&  echo "$env_var" >> $script
-    echo " " >> $script && echo "bash  /benchmark_result/record/tool/check_model.sh $catg $currentTime "${model_list[*]}"" >>$script
-    [[ $catg == "deeprec_bf16" ]] && bf16_para="--bf16"
-    [[ $catg == "tf_fp32" ]] && tf_para="--tf"
+    paras=$modelArgs
+    
+    echo "model_list=\$1" >>$script
+    echo "category=\$2" >>$script
+    echo "cat_param=\$3" >>$script
+
+
+    echo " " >> $script && echo "bash  /benchmark_result/record/tool/check_model.sh $catg $currentTime \"\${model_list[*]}\"" >>$script
+
     for line in $model_list
     do
         log_tag=$(echo $paras| sed 's/ /_/g')
+        [[ $paras == "" ]] && log_tag=""
         model_name=$line
         echo "echo 'testing $model_name of $catg $paras.......'" >> $script
         echo "cd /root/modelzoo/$model_name/" >> $script
         if [[ ! -d  $checkpoint_dir$currentTime/${model_name,,}_script$$log_tag ]];then
                 sudo mkdir -p $checkpoint_dir$currentTime/${model_name,,}_$script$log_tag
         fi
-        newline="LD_PRELOAD=/root/modelzoo/libjemalloc.so.2.5.1 python train.py $paras $tf_para $bf16_para --checkpoint $checkpoint_dir$currentTime/${model_name,,}_$catg$log_tag  >$log_dir$currentTime/${model_name,,}_$catg$log_tag.log 2>&1"
+        newline="LD_PRELOAD=/root/modelzoo/libjemalloc.so.2.5.1 python train.py \$cat_param $paras  --checkpoint $checkpoint_dir$currentTime/${model_name,,}_\$category$log_tag  >$log_dir$currentTime/${model_name,,}_\$category$log_tag.log 2>&1"
         echo $newline >> $script
     done
 }
@@ -63,22 +53,32 @@ function checkEnv()
 # run containers
 function runContainers()
 {
-    runSingleContainer $deeprec_test_image deeprec_bf16.sh
-    runSingleContainer $deeprec_test_image deeprec_fp32.sh
-    if [[ $stocktf_test==True ]];then
-        runSingleContainer $tf_test_image tf_fp32.sh
+    runSingleContainer $deeprec_test_image deeprec_bf16
+    runSingleContainer $deeprec_test_image deeprec_fp32
+    if [[ $stocktf==True ]];then
+        runSingleContainer $tf_test_image tf_fp32
     fi
 }
 function runSingleContainer()
 {
     image_repo=$1
-    script_name=$2
+    cat_name=$2
+    script_name='benchmark_modelzoo.sh'
+
+    if [[ $cat_name == "tf_fp32" ]];then
+        param="--tf"
+    elif [[ $cat_name == "deeprec_bf16" ]];then
+        param="--bf16"
+    else
+        param=
+    fi
+
     container_name=$(echo $2 | awk -F "." '{print $1}')
     host_path=$(cd benchmark_result && pwd)
-    sudo docker run --name $container_name\
-                    --rm \
+    sudo docker run -itd \
+                    --name $container_name\
                     -v $host_path:/benchmark_result/\
-                    $image_repo /bin/bash /benchmark_result/record/script/$currentTime/$script_name "${model_list[*]}"
+                    $image_repo /bin/bash /benchmark_result/record/script/$currentTime/$script_name "${model_list[*]}" $cat_name $param  
 }
 
 # check container status
@@ -100,7 +100,7 @@ function checkStatus()
         deeprec_16_status=$(sudo docker ps -a |grep deeprec_bf16| awk -F " " '{print $6$7$8$9$10}')
 
         echo "--------------------------------------------------"
-        echo "the status of tf_fp32 is $tf_32_status)..."
+        echo "the status of tf_fp32 is $tf_32_status..."
         echo "the status of deeprec_32 is $deeprec_32_status..."
         echo "the status of deeprec_16 is $deeprec_16_status..."
         echo "--------------------------------------------------"
@@ -117,9 +117,9 @@ currentTime=`date "+%Y-%m-%d-%H-%M-%S"`
 
 # config_file
 config_file="./config.yaml"
-
 # modelArgs
 modelArgs=$(cat $config_file | shyaml get-value modelArgs)
+[[ $modelArgs == None ]] && modelArgs=
 
 # log/checkpoint dir in image(log&checkpoint) and host(gol&pointcheck)
 log_dir=$(cat $config_file | shyaml get-value log_dir)
@@ -128,15 +128,13 @@ gol_dir=$(cat $config_file | shyaml get-value gol_dir)
 pointcheck_dir=$(cat $config_file | shyaml get-value pointcheck_dir)
 
 # run.sh
-deeprec_fp32_script="./benchmark_result/record/script/$currentTime/deeprec_fp32.sh"
-deeprec_bf16_script="./benchmark_result/record/script/$currentTime/deeprec_bf16.sh"
-tf_fp32_script="./benchmark_result/record/script/$currentTime/tf_fp32.sh"
+script_path="./benchmark_result/record/script/$currentTime/benchmark_modelzoo.sh"
 
 # model list
 model_list=$(cat config.yaml | shyaml get-values test_model)
 
 # stocktf
-stocktf_test=$(cat $config_file | shyaml get-value stocktf_test)
+stocktf=$(cat $config_file | shyaml get-value stocktf)
 
 # image name
 deeprec_test_image=$(cat $config_file | shyaml get-value deeprec_test_image)

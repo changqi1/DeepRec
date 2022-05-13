@@ -24,7 +24,7 @@ model_batchsize:
 modelArgs: 
 
 #tf on/off
-stocktf_test: on
+stocktf: on
 
 #directory used in the image
 log_dir: /benchmark_result/log/
