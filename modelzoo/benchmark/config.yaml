@@ -26,11 +26,11 @@ modelArgs:
 #tf on/off
 stocktf: on
 
+# set cpu
+cpu_sets: 
 
 # env config 
 env_var:
   - export START_STATISTIC_STEP=100
-  - export STOP_STATISTIC_STEP=200
-  - export TF_LAYOUT_PASS_GRAPH_ENABLE_ONLY_WHITE_LIST=1
-  - export TF_LAYOUT_PASS_GRAPH_CAST_FUSION=1
-  - export TF_LAYOUT_PASS_ONLY_WHITE_LIST=1
+  - export STOP_STATISTIC_STEP=110
+
