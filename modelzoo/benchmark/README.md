@@ -46,7 +46,7 @@ The following test environment should be installed:
 
 - `test model` : which models you need to benchmark, like `- WDL`. These models can be added or deleted according to the benchmark needs.  The default value is all six models that need to be benchmarked : `DLRM WDL DeepFM DSSM DIEN DIN`
 
-- `model_batchsize` : batchsize of all models, like `WDL: 512`. The corresponding value is set in the model. It is only displayed here and cannot be set.
+- `model_batchsize` : batch size of all models, like `WDL: 512`. Please keep the same batch size as used in model training. It is only used to calculate throughput and cannot be used to set training parameters.
 
 - `modelArgs` : parameters of deeprec benchmark, like `--emb_fusion true`, the default is null.
 
@@ -57,6 +57,6 @@ The following test environment should be installed:
 - `env_var` : environment config for DeepRec feature, like `export START_STATISTIC_STEP` and `export STOP_STATISTIC_STEP`
 
 ### log
-The documents of each benchmark are stored in `benchmark/benchmark_result/log/$currentTime`.
+The documents of each benchmark are stored in `benchmark/benchmark_result/log/$CurrentTime`.
 
 The end of log files are ACC and AUC value and the thoughtout values are multiply the average value of 20-30 `global_step/sec` by model batchsize
