@@ -1,6 +1,6 @@
 #test image
-deeprec_test_image: cesg-prc-registry.cn-beijing.cr.aliyuncs.com/cesg-ali/deeprec-modelzoo:latest
-tf_test_image: cesg-prc-registry.cn-beijing.cr.aliyuncs.com/cesg-ali/deeprec-modelzoo:tf
+deeprec_test_image: alibaba/deeprec-release-modelzoo:latest
+tf_test_image: alideeprec/deeprec-weekly-modelzoo:tf
 
 #test model default: [WDL, DLRM ,DeepFM, DSSM, DIEN, DIN]
 test_model: 
