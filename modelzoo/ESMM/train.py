@@ -81,60 +81,60 @@ class ESMM():
             raise ValueError('Dataset is not defined.')
         if not user_column or not item_column or not combo_column:
             raise ValueError('User column, item column or combo column is not defined.')
-        self.__user_column = user_column
-        self.__item_column = item_column
-        self.__combo_column = combo_column
+        self._user_column = user_column
+        self._item_column = item_column
+        self._combo_column = combo_column
 
-        self.__user_mlp = user_mlp
-        self.__item_mlp = item_mlp
-        self.__combo_mlp = combo_mlp
-        self.__cvr_mlp = cvr_mlp
-        self.__ctr_mlp = ctr_mlp
-        self.__batch_size = batch_size
+        self._user_mlp = user_mlp
+        self._item_mlp = item_mlp
+        self._combo_mlp = combo_mlp
+        self._cvr_mlp = cvr_mlp
+        self._ctr_mlp = ctr_mlp
+        self._batch_size = batch_size
 
-        self.__optimizer_type = optimizer_type
-        self.__learning_rate = learning_rate
-        self.__l2_regularization = self.__l2_regularizer(l2_scale) if l2_scale else None
-        self.__tf = stock_tf
-        self.__adaptive_emb = adaptive_emb
-        self.__bf16 = False if self.__tf else bf16
+        self._optimizer_type = optimizer_type
+        self._learning_rate = learning_rate
+        self._l2_regularization = self._l2_regularizer(l2_scale) if l2_scale else None
+        self._tf = stock_tf
+        self._adaptive_emb = adaptive_emb
+        self._bf16 = False if self._tf else bf16
 
-        self.__input_layer_partitioner = input_layer_partitioner
-        self.__dense_layer_partitioner = dense_layer_partitioner
+        self._input_layer_partitioner = input_layer_partitioner
+        self._dense_layer_partitioner = dense_layer_partitioner
 
         self.feature = input[0]
         self.label = input[1]
 
-        self.__create_model()
+        self._create_model()
 
         with tf.name_scope('head'):
-            self.__create_loss()
-            self.__create_optimizer()
-            self.__create_metrics()
+            self._create_loss()
+            self._create_optimizer()
+            self._create_metrics()
 
     # used to add summary in tensorboard
-    def __add_layer_summary(self, value, tag):
+    def _add_layer_summary(self, value, tag):
         tf.summary.scalar('%s/fraction_of_zero_values' % tag,
                           tf.nn.zero_fraction(value))
         tf.summary.histogram('%s/activation' % tag, value)
 
     # compute loss
-    def __create_loss(self):
+    def _create_loss(self):
         bce_loss_func = tf.keras.losses.BinaryCrossentropy()
         self.probability = tf.squeeze(self.probability)
         self.loss = tf.math.reduce_mean(bce_loss_func(self.label, self.probability))
         tf.summary.scalar('loss', self.loss)
 
     # define optimizer and generate train_op
-    def __create_optimizer(self):
+    def _create_optimizer(self):
         self.global_step = tf.train.get_or_create_global_step()
-        if self.__tf or self.__optimizer_type == 'adam':
+        if self._tf or self._optimizer_type == 'adam':
             optimizer = tf.train.AdamOptimizer(
-                learning_rate=self.__learning_rate)
-        elif self.__optimizer_type == 'adamasync':
-            optimizer = tf.train.AdamAsyncOptimizer(learning_rate=self.__learning_rate)
-        elif self.__optimizer_type == 'adagraddecay':
-            optimizer = tf.train.AdagradDecayOptimizer(learning_rate=self.__learning_rate,
+                learning_rate=self._learning_rate)
+        elif self._optimizer_type == 'adamasync':
+            optimizer = tf.train.AdamAsyncOptimizer(learning_rate=self._learning_rate)
+        elif self._optimizer_type == 'adagraddecay':
+            optimizer = tf.train.AdagradDecayOptimizer(learning_rate=self._learning_rate,
                                                        global_step=self.global_step)
         else:
             raise ValueError('Optimizer type error.')
@@ -145,7 +145,7 @@ class ESMM():
                                                global_step=self.global_step)
 
     # compute acc & auc
-    def __create_metrics(self):
+    def _create_metrics(self):
         self.acc, self.acc_op = tf.metrics.accuracy(labels=self.label,
                                                     predictions=self.output)
         self.auc, self.auc_op = tf.metrics.auc(labels=self.label,
@@ -154,17 +154,17 @@ class ESMM():
         tf.summary.scalar('eval_acc', self.acc)
         tf.summary.scalar('eval_auc', self.auc)
 
-    def __create_dense_layer(self, input, num_hidden_units, activation, layer_name):
+    def _create_dense_layer(self, input, num_hidden_units, activation, layer_name):
         with tf.variable_scope(layer_name, reuse=tf.AUTO_REUSE) as mlp_layer_scope:
             dense_layer = tf.layers.dense(input,
                                        units=num_hidden_units,
                                        activation=activation,
-                                       kernel_regularizer=self.__l2_regularization,
+                                       kernel_regularizer=self._l2_regularization,
                                        name=mlp_layer_scope)
-            self.__add_layer_summary(dense_layer, mlp_layer_scope.name)
+            self._add_layer_summary(dense_layer, mlp_layer_scope.name)
         return dense_layer
 
-    def __l2_regularizer(self, scale, scope=None):
+    def _l2_regularizer(self, scale, scope=None):
         if isinstance(scale, numbers.Integral):
             raise ValueError(f'Scale cannot be an integer: {scale}')
         if isinstance(scale, numbers.Real):
@@ -180,132 +180,132 @@ class ESMM():
 
         return l2
 
-    def __make_scope(self, name, bf16):
+    def _make_scope(self, name, bf16):
         if(bf16):
             return tf.variable_scope(name, reuse=tf.AUTO_REUSE).keep_weights()
         else:
             return tf.variable_scope(name, reuse=tf.AUTO_REUSE)
 
     # create model
-    def __create_model(self):
+    def _create_model(self):
         with tf.variable_scope('user_input_layer',
-                               partitioner=self.__input_layer_partitioner,
+                               partitioner=self._input_layer_partitioner,
                                reuse=tf.AUTO_REUSE):
-            if not self.__tf and self.__adaptive_emb:
+            if not self._tf and self._adaptive_emb:
                 '''Adaptive Embedding Feature Part 1 of 2'''
                 adaptive_mask_tensors = {}
                 for col in USER_COLUMN:
-                    adaptive_mask_tensors[col] = tf.ones([self.__batch_size],
+                    adaptive_mask_tensors[col] = tf.ones([self._batch_size],
                                                          tf.int32)
                 user_emb = tf.feature_column.input_layer(
                     self.feature,
-                    self.__user_column,
+                    self._user_column,
                     adaptive_mask_tensors=adaptive_mask_tensors)
             else:
                 user_emb = tf.feature_column.input_layer(self.feature,
-                                                         self.__user_column)
+                                                         self._user_column)
         with tf.variable_scope('item_input_layer',
-                               partitioner=self.__input_layer_partitioner,
+                               partitioner=self._input_layer_partitioner,
                                reuse=tf.AUTO_REUSE):
-            if not self.__tf and self.__adaptive_emb:
+            if not self._tf and self._adaptive_emb:
                 '''Adaptive Embedding Feature Part 1 of 2'''
                 adaptive_mask_tensors = {}
                 for col in ITEM_COLUMN:
-                    adaptive_mask_tensors[col] = tf.ones([self.__batch_size],
+                    adaptive_mask_tensors[col] = tf.ones([self._batch_size],
                                                          tf.int32)
                 item_emb = tf.feature_column.input_layer(
                     self.feature,
-                    self.__item_column,
+                    self._item_column,
                     adaptive_mask_tensors=adaptive_mask_tensors)
             else:
                 item_emb = tf.feature_column.input_layer(self.feature,
-                                                         self.__item_column)
+                                                         self._item_column)
         with tf.variable_scope('combo_input_layer',
-                               partitioner=self.__input_layer_partitioner,
+                               partitioner=self._input_layer_partitioner,
                                reuse=tf.AUTO_REUSE):
-            if not self.__tf and self.__adaptive_emb:
+            if not self._tf and self._adaptive_emb:
                 '''Adaptive Embedding Feature Part 1 of 2'''
                 adaptive_mask_tensors = {}
                 for col in COMBO_COLUMN:
-                    adaptive_mask_tensors[col] = tf.ones([self.__batch_size],
+                    adaptive_mask_tensors[col] = tf.ones([self._batch_size],
                                                          tf.int32)
                 combo_emb = tf.feature_column.input_layer(
                     self.feature,
-                    self.__combo_column,
+                    self._combo_column,
                     adaptive_mask_tensors=adaptive_mask_tensors)
             else:
                 for key in TAG_COLUMN:
                     self.feature[key] = tf.strings.split(self.feature[key], '|')
                 combo_emb = tf.feature_column.input_layer(self.feature,
-                                                          self.__combo_column)
+                                                          self._combo_column)
 
-        with self.__make_scope('ESMM', self.__bf16):
-            if self.__bf16:
+        with self._make_scope('ESMM', self._bf16):
+            if self._bf16:
                 user_emb = tf.cast(user_emb, dtype=tf.bfloat16)
                 item_emb = tf.cast(item_emb, dtype=tf.bfloat16)
                 combo_emb = tf.cast(combo_emb, dtype=tf.bfloat16)
 
             with tf.variable_scope('user_mlp_layer',
-                                   partitioner=self.__dense_layer_partitioner,
+                                   partitioner=self._dense_layer_partitioner,
                                    reuse=tf.AUTO_REUSE):
-                for layer_id, num_hidden_units in enumerate(self.__user_mlp):
-                    user_emb = self.__create_dense_layer(user_emb,
+                for layer_id, num_hidden_units in enumerate(self._user_mlp):
+                    user_emb = self._create_dense_layer(user_emb,
                                                          num_hidden_units,
                                                          tf.nn.relu,
                                                          f'user_mlp_{layer_id}')
 
             with tf.variable_scope('item_mlp_layer',
-                                   partitioner=self.__dense_layer_partitioner,
+                                   partitioner=self._dense_layer_partitioner,
                                    reuse=tf.AUTO_REUSE):
-                for layer_id, num_hidden_units in enumerate(self.__item_mlp):
-                    item_emb = self.__create_dense_layer(item_emb,
+                for layer_id, num_hidden_units in enumerate(self._item_mlp):
+                    item_emb = self._create_dense_layer(item_emb,
                                                          num_hidden_units,
                                                          tf.nn.relu,
                                                          f'item_mlp_{layer_id}')
 
             with tf.variable_scope('combo_mlp_layer',
-                                   partitioner=self.__dense_layer_partitioner,
+                                   partitioner=self._dense_layer_partitioner,
                                    reuse=tf.AUTO_REUSE):
-                for layer_id, num_hidden_units in enumerate(self.__combo_mlp):
-                    combo_emb = self.__create_dense_layer(combo_emb,
+                for layer_id, num_hidden_units in enumerate(self._combo_mlp):
+                    combo_emb = self._create_dense_layer(combo_emb,
                                                           num_hidden_units,
                                                           tf.nn.relu,
                                                           f'combo_mlp_{layer_id}')
 
             concat = tf.concat([user_emb, item_emb, combo_emb], axis=1)
 
-            pCVR = self.__build_cvr_model(concat)
-            pCTR = self.__build_ctr_model(concat)
+            pCVR = self._build_cvr_model(concat)
+            pCTR = self._build_ctr_model(concat)
 
             pCTCVR = tf.cast(tf.multiply(pCVR, pCTR), tf.float32)
             self.probability = pCTCVR
             self.output = tf.round(self.probability)
 
-    def __build_cvr_model(self, net):
+    def _build_cvr_model(self, net):
         with tf.variable_scope('cvr_mlp',
-                               partitioner=self.__dense_layer_partitioner,
+                               partitioner=self._dense_layer_partitioner,
                                reuse=tf.AUTO_REUSE):
-            for layer_id, num_hidden_units in enumerate(self.__cvr_mlp):
-                net = self.__create_dense_layer(net,
+            for layer_id, num_hidden_units in enumerate(self._cvr_mlp):
+                net = self._create_dense_layer(net,
                                                 num_hidden_units,
                                                 tf.nn.relu,
                                                 f'cvr_mlp_hiddenlayer_{layer_id}')
-            net = self.__create_dense_layer(net,
+            net = self._create_dense_layer(net,
                                             1,
                                             tf.math.sigmoid,
                                             'cvr_mlp_hiddenlayer_last')
         return net
 
-    def __build_ctr_model(self, net):
+    def _build_ctr_model(self, net):
         with tf.variable_scope('ctr_mlp',
-                               partitioner=self.__dense_layer_partitioner,
+                               partitioner=self._dense_layer_partitioner,
                                reuse=tf.AUTO_REUSE):
-            for layer_id, num_hidden_units in enumerate(self.__ctr_mlp):
-                net = self.__create_dense_layer(net,
+            for layer_id, num_hidden_units in enumerate(self._ctr_mlp):
+                net = self._create_dense_layer(net,
                                                 num_hidden_units,
                                                 tf.nn.relu,
                                                 f'ctr_mlp_hiddenlayer_{layer_id}')
-            net = self.__create_dense_layer(net,
+            net = self._create_dense_layer(net,
                                             1,
                                             tf.math.sigmoid,
                                             'ctr_mlp_hiddenlayer_last')
@@ -464,21 +464,8 @@ def train(sess_config,
     `tf.train.MonitoredTrainingSession(save_incremental_checkpoint_secs=args.incremental_ckpt)`
     '''
     if not stock_tf and incremental_ckpt:
-        raise ValueError('Incremental_Checkpoint has not been enabled yet.' \
+        raise ValueError('Incremental_Checkpoint has not been enabled yet. ' \
                          'Please see comments in the code.')
-        # with tf.train.MonitoredTrainingSession(
-        #         master=server.target if server else '',
-        #         is_chief=tf_config['is_chief'] if tf_config else True,
-        #         hooks=hooks,
-        #         scaffold=scaffold,
-        #         checkpoint_dir=checkpoint_dir,
-        #         save_checkpoint_steps=save_ckp_steps,
-        #         summary_dir=checkpoint_dir,
-        #         save_summaries_steps=save_steps,
-        #         config=sess_config,
-        #         save_incremental_checkpoint_secs=incremental_ckpt) as sess:
-        #     while not sess.should_stop():
-        #         sess.run([model.loss, model.train_op])
     else:
         with tf.train.MonitoredTrainingSession(
                 master=server.target if server else '',
@@ -628,7 +615,7 @@ def main(stock_tf, tf_config=None, server=None):
 
     if args.smartstaged and not stock_tf:
         '''SmartStage Feature'''
-        next_element = tf.staged(next_element, num_threads=8, capacity=40)
+        next_element = tf.staged(next_element, num_threads=4, capacity=40)
         sess_config.graph_options.optimizer_options.do_smart_stage = True
         hooks.append(tf.make_prefetch_hook())
     if args.op_fusion and not stock_tf:
@@ -870,7 +857,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     stock_tf = args.tf if args.tf else check_stock_tf()
-    if stock_tf:
+    if not stock_tf:
         set_env_for_DeepRec()
 
     TF_CONFIG = os.getenv('TF_CONFIG')
