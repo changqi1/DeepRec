@@ -806,6 +806,10 @@ def generate_cluster_info(TF_CONFIG):
 
     is_chief = True if task_index == 0 else False
     cluster = tf.train.ClusterSpec({'ps': ps_hosts, 'worker': worker_hosts})
+
+    if args.protocol in ['grpc++', 'star_server']:
+        raise ValueError('Grpc++ and star_server protocols have not been enabled in the model yet')
+
     server = tf.distribute.Server(cluster,
                                   job_name=task_type,
                                   task_index=task_index,
