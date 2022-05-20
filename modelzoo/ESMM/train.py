@@ -133,9 +133,13 @@ class ESMM():
                 learning_rate=self._learning_rate)
         elif self._optimizer_type == 'adamasync':
             optimizer = tf.train.AdamAsyncOptimizer(learning_rate=self._learning_rate)
+        elif self._optimizer_type == 'adagrad':
+            optimizer = tf.train.AdagradOptimizer(learning_rate=self._learning_rate)
         elif self._optimizer_type == 'adagraddecay':
             optimizer = tf.train.AdagradDecayOptimizer(learning_rate=self._learning_rate,
                                                        global_step=self.global_step)
+        elif self._optimizer_type == 'gradientdescent':
+            optimizer = tf.train.GradientDescentOptimizer(learning_rate=self._learning_rate)
         else:
             raise ValueError('Optimizer type error.')
 

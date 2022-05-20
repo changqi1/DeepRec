@@ -86,7 +86,7 @@ input:
         docker pull alideeprec/deeprec-release-modelzoo:latest
         docker run -it alideeprec/deeprec-release-modelzoo:latest /bin/bash
         # In docker container
-        cd /root/modelzoo/DIN
+        cd /root/modelzoo/ESMM
         ```
 2.  Training.
     ```
@@ -113,7 +113,7 @@ input:
       - `--bf16`: Enable DeepRec BF16 feature in DeepRec. Use FP32 by default.
       - `--emb_fusion`: Whether to enable embedding fusion, Default is `True`.
       - `--op_fusion`: Whether to enable Auto graph fusion feature. Default is `True`.
-      - `--optimizer`: Choose the optimizer for deep model from ['adam', 'adamasync', 'adagraddecay']. Use `adagrad` by default.
+      - `--optimizer`: Choose the optimizer for deep model from ['adam', 'adamasync', 'adagraddecay', 'adagrad', 'gradientdescent']. Use `adamasync` by default.
       - `--smartstaged`: Whether to enable SmartStaged feature of DeepRec, Default is `True`.
       - `--micro_batch`: Set num for Auto Micro Batch. Default is `0`. (Not really enabled)
       - `--ev`: Whether to enable DeepRec EmbeddingVariable. Default is `False`.
