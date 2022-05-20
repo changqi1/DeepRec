@@ -119,6 +119,8 @@ class SimpleMultiTask():
                 learning_rate=self._learning_rate)
         elif not self._tf and self._optimizer_type == 'adamasync':
             optimizer = tf.train.AdamAsyncOptimizer(learning_rate=self._learning_rate)
+        elif self._optimizer_type == 'adagrad':
+            optimizer = tf.train.AdagradOptimizer(learning_rate=self._learning_rate)
         elif self._optimizer_type == 'adagraddecay':
             optimizer = tf.train.AdagradDecayOptimizer(learning_rate=self._learning_rate,
                                                        global_step=self.global_step)
@@ -646,7 +648,7 @@ def get_arg_parser():
     parser.add_argument('--optimizer', type=str,
                         choices=['adam', 'adamasync', 'adagraddecay',
                                  'adagrad', 'gradientdescent'],
-                        default='adamasync')
+                        default='adagrad')
     '''Optional DeepRec optimizations'''
     parser.add_argument('--ev', \
                         help='Whether to enable DeepRec EmbeddingVariable',
