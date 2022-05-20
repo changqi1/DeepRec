@@ -39,9 +39,9 @@ def gen_cluster_info(workspace):
   print("Start to gen endpoint_map file.")
   endpoint_map_path = "/tmp/.endpoint_map"
   with open(endpoint_map_path, 'w') as fout:
-    for node in node_list:
-      host = node[0:node.index(':')]
-      fout.write(node + "=" + host + ":" + DEFAULT_SEASTAR_PORT + "\n")
+   for node in node_list:
+     host = node[0:node.index(':')]
+     fout.write(node + "=" + host + ":" + DEFAULT_SEASTAR_PORT + "\n")
   os.system("ls -ltr /tmp/.endpoint_map")
 
   task = tf_config.get("task", {})
@@ -74,6 +74,13 @@ def set_jemalloc_version(workspace):
   elif "max" == strategy:
     cmd_str = "export JEMALLOC_VERSION=" + os.path.join(workspace, JEMALLOC_251) + ";"
     cmd_str += "export MALLOC_CONF=background_thread:true,metadata_thp:auto,dirty_decay_ms:240000,muzzy_decay_ms:240000;"
+  elif "244" == strategy:
+    cmd_str = "export JEMALLOC_VERSION=" + os.path.join(workspace, JEMALLOC_244) + ";"
+  elif "251" == strategy:
+    cmd_str = "export JEMALLOC_VERSION=" + os.path.join(workspace, JEMALLOC_251) + ";"
+    cmd_str += "export MALLOC_CONF=background_thread:true,metadata_thp:auto,dirty_decay_ms:60000,muzzy_decay_ms:60000;"
+  elif "close" == strategy:
+    pass
   else:
     cmd_str = "export JEMALLOC_VERSION=" + os.path.join(workspace, JEMALLOC_251) + ";"
     cmd_str += "export MALLOC_CONF=background_thread:true,metadata_thp:auto,dirty_decay_ms:240000,muzzy_decay_ms:240000;"
@@ -91,6 +98,9 @@ def pip_install_requirements(workspace):
 
 def run_tensorflow_job(workspace, tf_script, tf_args, tf_envs, set_jemalloc_version_cmd):
   cmd_str = "cd " + workspace + ";"
+  if set_jemalloc_version_cmd:
+    cmd_str += set_jemalloc_version_cmd
+    cmd_str += "LD_PRELOAD=${JEMALLOC_VERSION} "
   cmd_str += " ".join(tf_envs) + " $(which python) -u "
   cmd_str += tf_script + " " + " ".join(tf_args)
   print("run tensorflow command:", cmd_str)
@@ -125,7 +135,6 @@ def set_network_threads(job_name):
     envs.append("PS_DEFAULT_CORE_NUM=24")
   return envs
 
-
 if __name__ == "__main__":
   print("start launching tensorflow job")
 
@@ -139,13 +148,21 @@ if __name__ == "__main__":
     exit(1)
   tf_script = os.environ.get("TF_SCRIPT", "")
 
+  if "JEMALLOC_PATH" not in os.environ:
+    jemalloc_path = workspace
+  else:
+    jemalloc_path = os.environ.get("JEMALLOC_PATH", "")
+
   tf_args = sys.argv[1:]
 
   tf_envs = []
   if "TF_CONFIG" in os.environ:
     ps_hosts, worker_hosts, chief_hosts, job_name, task_index = gen_cluster_info(workspace)
 
-  set_jemalloc_version_cmd = set_jemalloc_version(workspace)
+    os.environ["TASK_INDEX"] = str(task_index)
+    os.environ["JOB_NAME"] = str(job_name)
+
+  set_jemalloc_version_cmd = set_jemalloc_version(jemalloc_path)
 
   ret_code = pip_install_requirements(workspace)
   if (ret_code != 0):
