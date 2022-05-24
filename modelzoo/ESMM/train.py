@@ -186,7 +186,7 @@ class ESMM():
 
     def _make_scope(self, name, bf16):
         if(bf16):
-            return tf.variable_scope(name, reuse=tf.AUTO_REUSE).keep_weights()
+            return tf.variable_scope(name, reuse=tf.AUTO_REUSE).keep_weights(dtype=tf.float32)
         else:
             return tf.variable_scope(name, reuse=tf.AUTO_REUSE)
 
@@ -338,7 +338,7 @@ def build_model_input(filename, batch_size, num_epochs, seed, stock_tf, workqueu
             .repeat(num_epochs)
             .batch(batch_size)
             .map(parse_csv, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-            .prefetch(32))
+            .prefetch(2))
 
 # generate feature columns
 def build_feature_columns(stock_tf,
@@ -855,16 +855,11 @@ def set_env_for_DeepRec():
     os.environ['MALLOC_CONF'] = \
         'background_thread:true,metadata_thp:auto,dirty_decay_ms:20000,muzzy_decay_ms:20000'
 
-def check_stock_tf():
-    import pkg_resources
-    detailed_version = pkg_resources.get_distribution('Tensorflow').version
-    return not ('deeprec' in detailed_version)
-
 if __name__ == '__main__':
     parser = get_arg_parser()
     args = parser.parse_args()
 
-    stock_tf = args.tf if args.tf else check_stock_tf()
+    stock_tf = args.tf
     if not stock_tf:
         set_env_for_DeepRec()
 
