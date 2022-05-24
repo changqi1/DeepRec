@@ -187,7 +187,7 @@ class SimpleMultiTask():
             d_clk = tf.cast(self._input_layer, dtype=tf.bfloat16)
             with tf.variable_scope('clk_model',
                                    partitioner=self._dense_layer_partitioner,
-                                   reuse=tf.AUTO_REUSE).keep_weights():
+                                   reuse=tf.AUTO_REUSE).keep_weights(dtype=tf.float32):
                 for layer_id, num_hidden_units in enumerate(self._mlp):
                     d_clk = self._create_dense_layer(d_clk, num_hidden_units, tf.nn.relu, f'd{layer_id}_clk')
 
@@ -211,7 +211,7 @@ class SimpleMultiTask():
             d_buy = tf.cast(self._input_layer, dtype=tf.bfloat16)
             with tf.variable_scope('buy_model',
                                    partitioner=self._dense_layer_partitioner,
-                                   reuse=tf.AUTO_REUSE).keep_weights():
+                                   reuse=tf.AUTO_REUSE).keep_weights(dtype=tf.float32):
                 d_buy = self._input_layer
                 for layer_id, num_hidden_units in enumerate(self._mlp):
                     d_buy = self._create_dense_layer(d_buy, num_hidden_units, tf.nn.relu, f'd{layer_id}_buy')
@@ -252,7 +252,7 @@ def build_model_input(filename, batch_size, num_epochs, seed, stock_tf, workqueu
             .repeat(num_epochs)
             .batch(batch_size)
             .map(parse_csv, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-            .prefetch(32))
+            .prefetch(2))
 
 # generate feature columns
 def build_feature_columns(stock_tf,
@@ -648,7 +648,7 @@ def get_arg_parser():
     parser.add_argument('--optimizer', type=str,
                         choices=['adam', 'adamasync', 'adagraddecay',
                                  'adagrad', 'gradientdescent'],
-                        default='adagrad')
+                        default='adamasync')
     '''Optional DeepRec optimizations'''
     parser.add_argument('--ev', \
                         help='Whether to enable DeepRec EmbeddingVariable',
@@ -759,16 +759,11 @@ def set_env_for_DeepRec():
     os.environ['MALLOC_CONF'] = \
         'background_thread:true,metadata_thp:auto,dirty_decay_ms:20000,muzzy_decay_ms:20000'
 
-def check_stock_tf():
-    import pkg_resources
-    detailed_version = pkg_resources.get_distribution('Tensorflow').version
-    return not ('deeprec' in detailed_version)
-
 if __name__ == '__main__':
     parser = get_arg_parser()
     args = parser.parse_args()
 
-    stock_tf = args.tf if args.tf else check_stock_tf()
+    stock_tf = args.tf
     if not stock_tf:
         set_env_for_DeepRec()
 
