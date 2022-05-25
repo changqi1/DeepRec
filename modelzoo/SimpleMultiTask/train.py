@@ -269,7 +269,7 @@ def build_feature_columns(stock_tf,
             hash_bucket_size=HASH_BUCKET_SIZES[HASH_INPUTS[i]],
             dtype=tf.string)
 
-        if not stock_tf:
+        if not stock_tf and (emb_variable or adaptive_emb or dynamic_emb_var):
             '''Feature Elimination of EmbeddingVariable Feature'''
             if emb_var_elimination == 'gstep':
                 # Feature elimination based on global steps
@@ -572,7 +572,7 @@ def get_arg_parser():
     parser.add_argument('--steps',
                         help='set the number of steps on train dataset',
                         type=int,
-                        default=0)
+                        default=3000) # 3000 steps are required to match model_benchmark API's requirements
     parser.add_argument('--batch_size',
                         help='Batch size to train',
                         type=int,
@@ -759,11 +759,25 @@ def set_env_for_DeepRec():
     os.environ['MALLOC_CONF'] = \
         'background_thread:true,metadata_thp:auto,dirty_decay_ms:20000,muzzy_decay_ms:20000'
 
+def check_stock_tf():
+    import pkg_resources
+    detailed_version = pkg_resources.get_distribution('Tensorflow').version
+    return not ('deeprec' in detailed_version)
+
+def check_DeepRec_features():
+    return args.smartstaged or args.emb_fusion or args.op_fusion or args.micro_batch or args.bf16 or \
+           args.ev or args.adaptive_emb or args.dynamic_ev or (args.optimizer == 'adamasync') or \
+           args.incremental_ckpt  or args.workqueue
+
 if __name__ == '__main__':
     parser = get_arg_parser()
     args = parser.parse_args()
 
     stock_tf = args.tf
+    if not stock_tf and check_stock_tf() and check_DeepRec_features():
+        raise ValueError('Stock Tensorflow does not support DeepRec features. '
+                         'For Stock Tensorflow run the script with `--tf` argument.')
+
     if not stock_tf:
         set_env_for_DeepRec()
 
