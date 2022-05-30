@@ -531,7 +531,7 @@ def main(stock_tf, tf_config=None, server=None):
                   args.batch_size / args.micro_batch
                   ) if args.micro_batch and not stock_tf else args.batch_size
     if args.steps == 0:
-        no_epochs = 1
+        no_epochs = 1000
         train_steps = math.ceil(
             (float(no_epochs) * no_of_training_examples) / batch_size)
     else:
@@ -668,7 +668,7 @@ def get_arg_parser():
     parser.add_argument('--steps',
                         help='set the number of steps on train dataset',
                         type=int,
-                        default=3000) # 3000 steps are required to match model_benchmark API's requirements
+                        default=0)
     parser.add_argument('--batch_size',
                         help='Batch size to train',
                         type=int,

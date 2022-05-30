@@ -126,7 +126,7 @@ input:
       - `--workqueue`: Whether to enable WorkQueue. Default is `False`.
     - Basic Settings:
       - `--data_location`: Full path of train & eval data. Default is `./data`.
-      - `--steps`: Set the number of steps on train dataset. When default(`0`) is used, the number of steps is computed based on dataset size and number of epochs equals 1.
+      - `--steps`: Set the number of steps on train dataset. When default(`0`) is used, the number of steps is computed based on dataset size and number of epochs equals 1000.
       - `--no_eval`: Do not evaluate trained model by eval dataset.
       - `--batch_size`: Batch size to train. Default is `512`.
       - `--output_dir`: Full path to output directory for logs and saved model. Default is `./result`.
@@ -191,23 +191,23 @@ The benchmark is performed on the [Alibaba Cloud ECS general purpose instance fa
         <td rowspan="3">ESMM</td>
         <td>Community TensorFlow</td>
         <td>FP32</td>
-        <td>0.9995887</td>
-        <td>0.500000</td>
-        <td>121.804 (baseline)</td>
+        <td></td>
+        <td></td>
+        <td></td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32</td>
-        <td>0.9995887</td>
-        <td>0.4996916</td>
-        <td>182.622 (149.93%)</td>
+        <td></td>
+        <td></td>
+        <td></td>
     </tr>
     <tr>
         <td>DeepRec w/ oneDNN</td>
         <td>FP32+BF16</td>
-        <td>0.9995887</td>
-        <td>0.4898705</td>
-        <td>182.477 (149.81%)</td>
+        <td></td>
+        <td></td>
+        <td></td>
     </tr>
 </table>
 
