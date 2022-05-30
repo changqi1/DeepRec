@@ -466,7 +466,7 @@ def main(stock_tf, tf_config=None, server=None):
 
     # set directory path for checkpoint_dir
     keep_checkpoint_max = args.keep_checkpoint_max
-    model_dir = os.path.join(args.output_dir, 'model_ESMM_' + str(int(time.time())))
+    model_dir = os.path.join(args.output_dir, 'model_SimpleMultiTask_' + str(int(time.time())))
     checkpoint_dir = args.checkpoint_dir if args.checkpoint_dir else model_dir
     print(f'Saving model events to {checkpoint_dir}')
 
