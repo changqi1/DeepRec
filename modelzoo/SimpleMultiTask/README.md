@@ -111,7 +111,7 @@ input:
       - `--workqueue`: Whether to enable WorkQueue. Default is `False`.
     - Basic Settings:
       - `--data_location`: Full path of train & eval data. Default is `./data`.
-      - `--steps`: Set the number of steps on train dataset. When default(`0`) is used, the number of steps is computed based on dataset size and number of epochs equals 1.
+      - `--steps`: Set the number of steps on train dataset. When default(`0`) is used, the number of steps is computed based on dataset size and number of epochs equals 1000.
       - `--no_eval`: Do not evaluate trained model by eval dataset.
       - `--batch_size`: Batch size to train. Default is `512`.
       - `--output_dir`: Full path to output directory for logs and saved model. Default is `./result`.

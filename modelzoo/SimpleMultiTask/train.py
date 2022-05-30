@@ -153,6 +153,12 @@ class SimpleMultiTask():
             self._add_layer_summary(dense_layer, mlp_layer_scope.name)
         return dense_layer
 
+    def _make_scope(self, name, bf16):
+        if(bf16):
+            return tf.variable_scope(name, reuse=tf.AUTO_REUSE).keep_weights(dtype=tf.float32)
+        else:
+            return tf.variable_scope(name, reuse=tf.AUTO_REUSE)
+
     # create model
     def _create_model(self):
         with tf.variable_scope('input_layer',
@@ -183,50 +189,32 @@ class SimpleMultiTask():
             self.output = tf.round(self.probability)
 
     def _build_clk_model(self):
-        if self._bf16:
-            d_clk = tf.cast(self._input_layer, dtype=tf.bfloat16)
-            with tf.variable_scope('clk_model',
-                                   partitioner=self._dense_layer_partitioner,
-                                   reuse=tf.AUTO_REUSE).keep_weights(dtype=tf.float32):
-                for layer_id, num_hidden_units in enumerate(self._mlp):
-                    d_clk = self._create_dense_layer(d_clk, num_hidden_units, tf.nn.relu, f'd{layer_id}_clk')
+        with self._make_scope('clk_model', self._bf16):
+            if self._bf16:
+                self._input_layer = tf.cast(self._input_layer, dtype=tf.bfloat16)
+            d_clk = self._input_layer
+            for layer_id, num_hidden_units in enumerate(self._mlp):
+                d_clk = self._create_dense_layer(d_clk, num_hidden_units, tf.nn.relu, f'd{layer_id}_clk')
 
-                d_clk = self._create_dense_layer(d_clk, 1, None, 'output_clk')
+            d_clk = self._create_dense_layer(d_clk, 1, None, 'output_clk')
+            if self._bf16:
                 d_clk = tf.cast(d_clk, tf.float32)
-        else:
-            with tf.variable_scope('clk_model',
-                                   partitioner=self._dense_layer_partitioner,
-                                   reuse=tf.AUTO_REUSE):
-                d_clk = self._input_layer
-                for layer_id, num_hidden_units in enumerate(self._mlp):
-                    d_clk = self._create_dense_layer(d_clk, num_hidden_units, tf.nn.relu, f'd{layer_id}_clk')
 
-                d_clk = self._create_dense_layer(d_clk, 1, None, 'output_clk')
         Y_clk = tf.squeeze(d_clk)
 
         return tf.math.sigmoid(d_clk), Y_clk
 
     def _build_buy_model(self):
-        if self._bf16:
-            d_buy = tf.cast(self._input_layer, dtype=tf.bfloat16)
-            with tf.variable_scope('buy_model',
-                                   partitioner=self._dense_layer_partitioner,
-                                   reuse=tf.AUTO_REUSE).keep_weights(dtype=tf.float32):
-                d_buy = self._input_layer
-                for layer_id, num_hidden_units in enumerate(self._mlp):
-                    d_buy = self._create_dense_layer(d_buy, num_hidden_units, tf.nn.relu, f'd{layer_id}_buy')
+        with self._make_scope('buy_model', self._bf16):
+            if self._bf16:
+                self._input_layer = tf.cast(self._input_layer, dtype=tf.bfloat16)
+            d_buy = self._input_layer
+            for layer_id, num_hidden_units in enumerate(self._mlp):
+                d_buy = self._create_dense_layer(d_buy, num_hidden_units, tf.nn.relu, f'd{layer_id}_buy')
 
-                d_buy = self._create_dense_layer(d_buy, 1, None, 'output_buy')
-            d_buy = tf.cast(d_buy, tf.float32)
-        else:
-            with tf.variable_scope('buy_model',
-                                   partitioner=self._dense_layer_partitioner,
-                                   reuse=tf.AUTO_REUSE):
-                d_buy = self._input_layer
-                for layer_id, num_hidden_units in enumerate(self._mlp):
-                    d_buy = self._create_dense_layer(d_buy, num_hidden_units, tf.nn.relu, f'd{layer_id}_buy')
-
-                d_buy = self._create_dense_layer(d_buy, 1, None, 'output_buy')
+            d_buy = self._create_dense_layer(d_buy, 1, None, 'output_buy')
+            if self._bf16:
+                d_buy = tf.cast(d_buy, tf.float32)
 
         Y_buy = tf.squeeze(d_buy)
 
@@ -438,7 +426,7 @@ def main(stock_tf, tf_config=None, server=None):
                   args.batch_size / args.micro_batch
                   ) if args.micro_batch and not stock_tf else args.batch_size
     if args.steps == 0:
-        no_epochs = 1
+        no_epochs = 1000
         train_steps = math.ceil(
             (float(no_epochs) * no_of_training_examples) / batch_size)
     else:
@@ -572,7 +560,7 @@ def get_arg_parser():
     parser.add_argument('--steps',
                         help='set the number of steps on train dataset',
                         type=int,
-                        default=3000) # 3000 steps are required to match model_benchmark API's requirements
+                        default=0)
     parser.add_argument('--batch_size',
                         help='Batch size to train',
                         type=int,
