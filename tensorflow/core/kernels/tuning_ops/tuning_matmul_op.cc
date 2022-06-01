@@ -26,6 +26,8 @@ limitations under the License.
 #include <stdio.h>
 #include "tunable_matmul.h"
 
+#define TUNED_CONFIG_FILE "./tuned"
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -39,17 +41,25 @@ REGISTER_OP("TuningMatmul")
     .Attr("T: {float}")
     .SetShapeFn(shape_inference::MatMulShape);
 
-#define TUNED_CONFIG_FILE "./tuned"
-
 template <typename Device, typename T>
 class TuningMatMulOp : public OpKernel {
  public:
   explicit TuningMatMulOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
-    TF_CHECK_OK(ReadBoolFromEnvVar("TF_ENABLE_TUNING",
+    // TF_CHECK_OK(ReadBoolFromEnvVar("TF_TUNING_FILE",
+    //                         /*default_val=*/false, &tune_));
+    TF_CHECK_OK(ReadBoolFromEnvVar("TF_TUNING_ENABLE",
                             /*default_val=*/false, &tune_));
-    tmm_ = new TunableMatmul();
-    std::cout << "marvin test -- TuningMatMulOp init" << std::endl;
+    TF_CHECK_OK(ReadBoolFromEnvVar("TF_TUNING_ENABLE_HOST",
+                            /*default_val=*/false, &host_));
+    TF_CHECK_OK(ReadInt64FromEnvVar("TF_TUNING_MAX_ITER",
+                            /*default_val=*/0, &max_iters_));
+    TF_CHECK_OK(ReadInt64FromEnvVar("TF_TUNING_ITER_PRE_CYCLE",
+                            /*default_val=*/0, &iter_per_cycle_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("transpose_a", &transpose_a_));
+    OP_REQUIRES_OK(ctx, ctx->GetAttr("transpose_b", &transpose_b_));
 
+    tmm_ = new TunableMatmul();
+    tmm_->SetConditions(iter_per_cycle_, max_iters_);
   }
 
   ~TuningMatMulOp() {
@@ -57,8 +67,6 @@ class TuningMatMulOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* ctx) override {
-    std::cout << "marvin test -- Compute start" << std::endl;
-    Timer t_;
     const Tensor& a = ctx->input(0);
     const Tensor& b = ctx->input(1);
 
@@ -93,8 +101,6 @@ class TuningMatMulOp : public OpKernel {
       // If a has shape [x, 0] and b has shape [0, y], the
       // output shape is [x, y] where x and y are non-zero, so we fill
       // the output with zeros.
-      //functor::SetZeroFunctor<Device, T> f;
-      //f(ctx->eigen_device<Device>(), out->flat<T>());
       auto o = out->flat<T>();
       o.device(ctx->eigen_device<Device>()) = o.constant(T(0));
       return;
@@ -110,31 +116,43 @@ class TuningMatMulOp : public OpKernel {
     auto b_ptr = (b.template flat<T>().data());
     auto c_ptr = (out->template flat<T>().data());
 
-    /*tmm compute*/
-    tmm_->SetParams(m, n, k, k, n, n);
-    if (tune_) {
-      std::cout << "marvin test -- tune_ start" << std::endl;
-      tmm_->host_tune(false);
-      tmm_->save_config(TUNED_CONFIG_FILE);
-    } else {
-      std::cout << "marvin test -- load config" << std::endl;
-      if (!tmm_->load_config(TUNED_CONFIG_FILE)){
-          printf("Cannot load matmul config.\n");
-          exit(-1);
-      }
-    }
-    std::cout << "marvin test -- compute start" << std::endl;
-    tmm_->compute(a_ptr, b_ptr, c_ptr);
-
-    printf("Host Compute Time: %f ms\n", t_.getTime());
+    TuningGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
+                transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
   }
 
  private:
   bool transpose_a_;
   bool transpose_b_;
   TunableMatmul* tmm_;
+  int64 max_iters_ = 0;
+  int64 iter_per_cycle_ = 0;
   bool tune_ = false;
-  bool INITIAL = false;
+  bool host_ = false;
+
+  void TuningGemm(OpKernelContext* ctx, bool transa, bool transb, const int m,
+                  const int n, const int k, const float* a, const int lda,
+                  const float* b, const int ldb, float* c, const int ldc) {
+    Timer t_;
+    /*tmm compute*/
+    tmm_->SetParams(m, n, k, lda, ldb, ldc, a, b, c);
+
+    // bool flush_b = false;
+    if (tune_) {
+      if(host_) {
+        tmm_->host_tune(false, a, b, c);
+      } else {
+        tmm_->tune(false, a, b, c);
+      }
+      // tmm_->save_config(TUNED_CONFIG_FILE);
+    } else {
+      if (!tmm_->load_config(TUNED_CONFIG_FILE)){
+          printf("Cannot load matmul config.\n");
+          // exit(-1);
+      }
+      tmm_->compute(a, b, c);
+    }
+    // printf("Host Compute Time: %f ms\n", t_.getTime());
+  }
 };
 
 // template <typename Device, typename T>

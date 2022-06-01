@@ -121,5 +121,7 @@ int checkHelp(int argc, char *argv[]); //-1:error, >=0:no error, 0:exist other o
 int tune(int argc, char *argv[], Suite *p_suite);
 int getOptParam(Algorithm algo, Suite* p_suite, int gen, int pop, OptParam** pp_OptParam); 
 int tuneSuiteWithOptParam(Suite *p_Suite, OptParam *p_OptParam);
-
+int registOptimizer(ParamOptimizerIF **p_ParamOptimizer, Suite *p_Suite, OptParam *p_OptParam, Map_StringToString *mss, Map_StringToString *curBestmss);
+bool tuneOneIteration(ParamOptimizerIF *p_ParamOptimizer, Suite *p_Suite, Map_StringToString mss,Map_StringToString curBestmss,float* pbest_fitness);
+void freeSpace(ParamOptimizerIF *p_ParamOptimizer, Map_StringToString mss, Map_StringToString curBestmss, Suite *pp_Suite);
 #endif
