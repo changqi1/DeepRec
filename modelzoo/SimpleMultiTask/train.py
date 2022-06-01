@@ -114,7 +114,7 @@ class SimpleMultiTask():
     # define optimizer and generate train_op
     def _create_optimizer(self):
         self.global_step = tf.train.get_or_create_global_step()
-        if self._tf or self._optimizer_type == 'adam':
+        if (self._tf and self._optimizer_type == 'adamasync') or self._optimizer_type == 'adam':
             optimizer = tf.train.AdamOptimizer(
                 learning_rate=self._learning_rate)
         elif not self._tf and self._optimizer_type == 'adamasync':
@@ -457,7 +457,7 @@ def main(stock_tf, tf_config=None, server=None):
         print(f'\tDynamic-dimension Embedding Variable: {args.dynamic_ev}')
         print(f'\tIncremental Checkpoint: {args.incremental_ckpt}')
         print(f'\tWorkQueue: {args.workqueue}')
-    temp_optimizer = 'adam' if stock_tf else args.optimizer
+    temp_optimizer = 'adam' if (stock_tf and args.optimizer == 'adamasync') else args.optimizer
     print(f'Used optimizer: {temp_optimizer}')
 
     # set fixed random seed
