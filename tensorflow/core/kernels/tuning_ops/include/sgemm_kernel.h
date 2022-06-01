@@ -1,5 +1,3 @@
-#ifndef __SGEMM_KERNEL_H
-#define __SGEMM_KERNEL_H
 #include <cstdlib>
 #include <memory>
 #include <cmath>
@@ -14,11 +12,6 @@
 
 #define likely(x)       __builtin_expect((x), 1)
 #define unlikely(x)     __builtin_expect((x), 0)
-
-// workaround c++17 warning
-// #if __GNUC__ && __cpp_if_constexpr < 201606
-// #define 
-// #endif
 
 // A class for forced loop unrolling at compile time
 template <int i>
@@ -44,18 +37,43 @@ struct compile_time_for<0> {
     }
 };
 
-// Get mask for last column
-template <int EXPANDED_N, int col>
-inline unsigned short get_mask(unsigned short mask) {
+// A class for compile time if
+// For lower version GCC which does not support "if constexpr"
+template <bool condition>
+struct compile_time_if_cls {
+    template <typename IfLambda, typename ElseLambda>
+    inline static void doit(const IfLambda& if_f, const ElseLambda& else_f) {
+        if_f();
+    }
+};
+template <>
+struct compile_time_if_cls<false> {
+    template <typename IfLambda, typename ElseLambda>
+    inline static void doit(const IfLambda& if_f, const ElseLambda& else_f) {
+        else_f();
+    }
+};
+template<bool condition, typename IfLambda, typename ElseLambda>
+void compile_time_if(const IfLambda& if_f, const ElseLambda& else_f) {
+    compile_time_if_cls<condition>::doit(if_f, else_f);
+}
+template<bool condition, typename IfLambda>
+void compile_time_if(const IfLambda& if_f) {
+    compile_time_if_cls<condition>::doit(if_f, []{});
+}
+
+// Get mask to load/store data
+template <int EXPANDED_N, const int col>
+inline unsigned short get_mask(const unsigned short mask) {
     // Not last column, return 0xffffff indicating load/store all 16 floats
-    if  (col < EXPANDED_N / 16 - 1)
+    if constexpr (col < EXPANDED_N / 16 - 1)
       return (unsigned short)0xffff;
     else
       return mask;
 }
 
 template <int EXPANDED_N>
-inline unsigned short get_mask(int col, unsigned short mask) {
+inline unsigned short get_mask(const int col, const unsigned short mask) {
     // Not last column, return 0xffffff indicating load/store all 16 floats
     if (col < EXPANDED_N / 16 - 1)
       return (unsigned short)0xffff;
@@ -82,19 +100,19 @@ namespace laf {
 
 // Get maximum lines computing at the same time, #registers for C is #LINES * #COLS
 template<int COLS>
- inline int get_max_lines() {
+constexpr inline int get_max_lines() {
   return 31 / (COLS + 1);
 }
 
 template<int M, int N, int K, int lda, int ldb, int ldc, bool ACC>
 void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
-   const int COLS = N / 16;
+  #define COLS (N / 16)
   assert(N % 16 == 0);
 
   // How many lines of A are computed at the same time
-   const int max_lines = get_max_lines<COLS>();
-   const int loops = (M + max_lines - 1) / max_lines;
-   const int LINES = (M + loops - 1) / loops;
+  constexpr const int max_lines = get_max_lines<COLS>();
+  constexpr const int loops = (M + max_lines - 1) / max_lines;
+  constexpr const int LINES = (M + loops - 1) / loops;
 
   __m512 va[LINES];
   __m512 vb;
@@ -103,10 +121,10 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
   int m = 0;
   for (; m + LINES <= M; m += LINES) {
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_loadu_ps(ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<LINES * COLS>::op(loadc);
@@ -121,10 +139,10 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
       va[i] = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + i, k, lda)));
     };
 
-    auto compute = [&va, &vb, &vc, B, COLS] (auto i, int k) { // Compute in vertical order
-       const int line = i % LINES;
-       const int col = i / LINES;
-      if  (line == 0) {
+    auto compute = [&va, &vb, &vc, B] (auto i, int k) { // Compute in vertical order
+      constexpr const int line = (int)i % LINES;
+      constexpr const int col = (int)i / LINES;
+      if constexpr (line == 0) {
         vb = _mm512_loadu_ps(ADDRESS(B, k, col * 16, ldb));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va[line], vb, vc[INDEX(line, col, COLS)]);
@@ -137,9 +155,9 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
     }
 
     // Store to C
-    auto store = [&vc, &C, m, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), vc[i]);
     };
 
@@ -147,14 +165,14 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
   } // end m
 
   // Deal with remaining rows
-  if  (M % LINES) {
-     const int lines = M % LINES;
+  if constexpr (M % LINES) {
+    constexpr const int lines = M % LINES;
 
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_loadu_ps(ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<lines * COLS>::op(loadc);
@@ -169,10 +187,10 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
       va[i] = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + i, k, lda)));
     };
 
-    auto compute = [&va, &vb, &vc, B, COLS] (auto i, int k) { // Compute in vertical order
-       const int line = i % lines;
-       const int col = i / lines;
-      if  (line == 0) {
+    auto compute = [&va, &vb, &vc, B] (auto i, int k) { // Compute in vertical order
+      constexpr const int line = (int)i % LINES;
+      constexpr const int col = (int)i / LINES;
+      if constexpr (line == 0) {
         vb = _mm512_loadu_ps(ADDRESS(B, k, col * 16, ldb));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va[line], vb, vc[INDEX(line, col, COLS)]);
@@ -185,25 +203,27 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
     }
 
     // Store to C
-    auto store = [&vc, &C, m, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), vc[i]);
     };
 
     compile_time_for<lines * COLS>::op(store);
   }
+
+  #undef COLS
 }
 
 template<int M, int N, bool ACC>
 void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int K) {
-   const int COLS = N / 16;
+  #define COLS (N / 16)
   assert(N % 16 == 0);
 
   // How many lines of A are computed at the same time
-   const int max_lines = get_max_lines<COLS>();
-   const int loops = (M + max_lines - 1) / max_lines;
-   const int LINES = (M + loops - 1) / loops;
+  constexpr const int max_lines = get_max_lines<COLS>();
+  constexpr const int loops = (M + max_lines - 1) / max_lines;
+  constexpr const int LINES = (M + loops - 1) / loops;
 
   __m512 va[LINES];
   __m512 vb;
@@ -212,10 +232,10 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
   int m = 0;
   for (; m + LINES <= M; m += LINES) {
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, ldc, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m, ldc] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_loadu_ps(ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<LINES * COLS>::op(loadc);
@@ -230,10 +250,10 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
       va[i] = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + i, k, lda)));
     };
 
-    auto compute = [&va, &vb, &vc, B, ldb, COLS] (auto i, int k) { // Compute in vertical order
-       const int line = i % LINES;
-       const int col = i / LINES;
-      if  (line == 0) {
+    auto compute = [&va, &vb, &vc, B, ldb] (auto i, int k) { // Compute in vertical order
+      constexpr const int line = (int)i % LINES;
+      constexpr const int col = (int)i / LINES;
+      if constexpr (line == 0) {
         vb = _mm512_loadu_ps(ADDRESS(B, k, col * 16, ldb));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va[line], vb, vc[INDEX(line, col, COLS)]);
@@ -246,9 +266,9 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
     }
 
     // Store to C
-    auto store = [&vc, &C, m, ldc, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m, ldc] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), vc[i]);
     };
 
@@ -256,14 +276,14 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
   } // end m
 
   // Deal with remaining rows
-  if  (M % LINES) {
-     const int lines = M % LINES;
+  if constexpr (M % LINES) {
+    constexpr const int lines = M % LINES;
 
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, ldc, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m, ldc] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_loadu_ps(ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<lines * COLS>::op(loadc);
@@ -278,10 +298,10 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
       va[i] = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + i, k, lda)));
     };
 
-    auto compute = [&va, &vb, &vc, B, ldb, COLS] (auto i, int k) { // Compute in vertical order
-       const int line = i % lines;
-       const int col = i / lines;
-      if  (line == 0) {
+    auto compute = [&va, &vb, &vc, B, ldb] (auto i, int k) { // Compute in vertical order
+      constexpr const int line = (int)i % LINES;
+      constexpr const int col = (int)i / LINES;
+      if constexpr (line == 0) {
         vb = _mm512_loadu_ps(ADDRESS(B, k, col * 16, ldb));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va[line], vb, vc[INDEX(line, col, COLS)]);
@@ -294,27 +314,29 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
     }
 
     // Store to C
-    auto store = [&vc, &C, m, ldc, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m, ldc] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), vc[i]);
     };
 
     compile_time_for<lines * COLS>::op(store);
   }
+
+  #undef COLS
 }
 
 // EXPANDED_N: expanded N to multiple of 16
 // Similar with fixmn, unless the last column load/store with mask
 template<int M, int EXPANDED_N, bool ACC>
 void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int N, int K) {
-   const int COLS = EXPANDED_N / 16;
+  #define COLS (EXPANDED_N / 16)
   assert(EXPANDED_N % 16 == 0);
 
   // How many lines of A are computed at the same time
-   const int max_lines = get_max_lines<COLS>();
-   const int loops = (M + max_lines - 1) / max_lines;
-   const int LINES = (M + loops - 1) / loops;
+  constexpr const int max_lines = get_max_lines<COLS>();
+  constexpr const int loops = (M + max_lines - 1) / max_lines;
+  constexpr const int LINES = (M + loops - 1) / loops;
 
   // How many float numbers in last column
   const int floats = (N % 16 == 0 ? 16 : N % 16);
@@ -327,10 +349,10 @@ void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb,
   int m = 0;
   for (; m + LINES <= M; m += LINES) {
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, ldc, mask, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m, ldc, mask] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_mask_loadu_ps(vc[i], get_mask<EXPANDED_N, col>(mask), ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<LINES * COLS>::op(loadc);
@@ -345,10 +367,10 @@ void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb,
       va[i] = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + i, k, lda)));
     };
 
-    auto compute = [&va, &vb, &vc, B, ldb, mask, COLS] (auto i, int k) { // Compute in vertical order
-       const int line = i % LINES;
-       const int col = i / LINES;
-      if  (line == 0) {
+    auto compute = [&va, &vb, &vc, B, ldb, mask] (auto i, int k) { // Compute in vertical order
+      constexpr const int line = (int)i % LINES;
+      constexpr const int col = (int)i / LINES;
+      if constexpr (line == 0) {
         vb = _mm512_mask_loadu_ps(vb, get_mask<EXPANDED_N, col>(mask), ADDRESS(B, k, col * 16, ldb));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va[line], vb, vc[INDEX(line, col, COLS)]);
@@ -361,9 +383,9 @@ void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb,
     }
 
     // Store to C
-    auto store = [&vc, &C, m, ldc, mask, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m, ldc, mask] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_mask_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), get_mask<EXPANDED_N, col>(mask), vc[i]);
     };
 
@@ -371,14 +393,14 @@ void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb,
   } // end m
 
   // Deal with remaining rows
-  if  (M % LINES) {
-     const int lines = M % LINES;
+  if constexpr (M % LINES) {
+    constexpr const int lines = M % LINES;
 
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, ldc, mask, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m, ldc, mask] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_mask_loadu_ps(vc[i], get_mask<EXPANDED_N, col>(mask), ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<lines * COLS>::op(loadc);
@@ -393,10 +415,10 @@ void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb,
       va[i] = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + i, k, lda)));
     };
 
-    auto compute = [&va, &vb, &vc, B, ldb, mask, COLS] (auto i, int k) { // Compute in vertical order
-       const int line = i % lines;
-       const int col = i / lines;
-      if  (line == 0) {
+    auto compute = [&va, &vb, &vc, B, ldb, mask] (auto i, int k) { // Compute in vertical order
+      constexpr const int line = (int)i % LINES;
+      constexpr const int col = (int)i / LINES;
+      if constexpr (line == 0) {
         vb = _mm512_mask_loadu_ps(vb, get_mask<EXPANDED_N, col>(mask), ADDRESS(B, k, col * 16, ldb));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va[line], vb, vc[INDEX(line, col, COLS)]);
@@ -409,24 +431,26 @@ void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb,
     }
 
     // Store to C
-    auto store = [&vc, &C, m, ldc, mask, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m, ldc, mask] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_mask_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), get_mask<EXPANDED_N, col>(mask), vc[i]);
     };
 
     compile_time_for<lines * COLS>::op(store);
   }
+
+  #undef COLS
 }
 
 // M is not a fixed value
 template<int N, bool ACC>
 void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int M, int K) {
-   const int COLS = N / 16;
+  #define COLS (N / 16)
   assert(N % 16 == 0);
 
   // How many lines of A are computed at the same time
-   const int LINES = get_max_lines<COLS>();
+  constexpr const int LINES = get_max_lines<COLS>();
 
   __m512 va[LINES];
   __m512 vb;
@@ -435,10 +459,10 @@ void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb,
   int m = 0;
   for (; m + LINES <= M; m += LINES) {
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, ldc, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m, ldc] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_loadu_ps(ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<LINES * COLS>::op(loadc);
@@ -453,10 +477,10 @@ void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb,
       va[i] = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + i, k, lda)));
     };
 
-    auto compute = [&va, &vb, &vc, B, ldb, COLS] (auto i, int k) { // Compute in vertical order
-       const int line = i % LINES;
-       const int col = i / LINES;
-      if  (line == 0) {
+    auto compute = [&va, &vb, &vc, B, ldb] (auto i, int k) { // Compute in vertical order
+      constexpr const int line = (int)i % LINES;
+      constexpr const int col = (int)i / LINES;
+      if constexpr (line == 0) {
         vb = _mm512_loadu_ps(ADDRESS(B, k, col * 16, ldb));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va[line], vb, vc[INDEX(line, col, COLS)]);
@@ -469,9 +493,9 @@ void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb,
     }
 
     // Store to C
-    auto store = [&vc, &C, m, ldc, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m, ldc] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), vc[i]);
     };
 
@@ -483,7 +507,7 @@ void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb,
     int lines = M - m;
 
     // Load from C or set to 0
-    if  (ACC) {
+    if constexpr (ACC) {
       #pragma unroll
       for (int i = 0; i < lines; ++i) {
         #pragma unroll
@@ -523,16 +547,18 @@ void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb,
       }
     }
   } // end if
+
+  #undef COLS
 }
 
 // EXPANDED_N: expanded N to multiple of 16
 template<int EXPANDED_N, bool ACC>
 void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int M, int N, int K) {
-   const int COLS = EXPANDED_N / 16;
+  #define COLS (EXPANDED_N / 16)
   assert(EXPANDED_N % 16 == 0);
 
   // How many lines of A are computed at the same time
-   const int LINES = get_max_lines<COLS>();
+  constexpr const int LINES = get_max_lines<COLS>();
 
   // How many float numbers in last column
   const int floats = (N % 16 == 0 ? 16 : N % 16);
@@ -545,10 +571,10 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
   int m = 0;
   for (; m + LINES <= M; m += LINES) {
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, ldc, mask, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m, ldc, mask] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_mask_loadu_ps(vc[i], get_mask<EXPANDED_N, col>(mask), ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<LINES * COLS>::op(loadc);
@@ -563,10 +589,10 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
       va[i] = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + i, k, lda)));
     };
 
-    auto compute = [&va, &vb, &vc, B, ldb, mask, COLS] (auto i, int k) { // Compute in vertical order
-       const int line = i % LINES;
-       const int col = i / LINES;
-      if  (line == 0) {
+    auto compute = [&va, &vb, &vc, B, ldb, mask] (auto i, int k) { // Compute in vertical order
+      constexpr const int line = (int)i % LINES;
+      constexpr const int col = (int)i / LINES;
+      if constexpr (line == 0) {
         vb = _mm512_mask_loadu_ps(vb, get_mask<EXPANDED_N, col>(mask), ADDRESS(B, k, col * 16, ldb));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va[line], vb, vc[INDEX(line, col, COLS)]);
@@ -579,9 +605,9 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
     }
 
     // Store to C
-    auto store = [&vc, &C, m, ldc, mask, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m, ldc, mask] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_mask_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), get_mask<EXPANDED_N, col>(mask), vc[i]);
     };
 
@@ -593,7 +619,7 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
     int lines = M - m;
 
     // Load from C or set to 0
-    if  (ACC) {
+    if constexpr (ACC) {
       #pragma unroll
       for (int i = 0; i < lines; ++i) {
         #pragma unroll
@@ -633,6 +659,8 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
       }
     }
   } // end if
+
+  #undef COLS
 }
 
 } // end namespace laf
@@ -642,7 +670,7 @@ namespace lbf {
   
 // Get maximum lines computing at the same time, #registers for C is #LINES * #COLS
 template<int COLS>
- inline int get_max_lines() {
+constexpr inline int get_max_lines() {
   return 31 / COLS - 1;
 }
 
@@ -650,13 +678,13 @@ template<int COLS>
 // M&N&K are fixed, and lda&ldb&ldc also fixed
 template<int M, int N, int K, int lda, int ldb, int ldc, bool ACC>
 void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
-   const int COLS = N / 16;
+  #define COLS (N / 16)
   //assert(N % 16 == 0);
 
   // How many lines of A are computed at the same time
-   const int max_lines = get_max_lines<COLS>();
-   const int loops = (M + max_lines - 1) / max_lines;
-   const int LINES = (M + loops - 1) / loops;
+  constexpr const int max_lines = get_max_lines<COLS>();
+  constexpr const int loops = (M + max_lines - 1) / max_lines;
+  constexpr const int LINES = (M + loops - 1) / loops;
 
   __m512 va;
   __m512 vb[COLS];
@@ -665,10 +693,10 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
   int m = 0;
   for (; m + LINES <= M; m += LINES) {
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_loadu_ps(ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<LINES * COLS>::op(loadc);
@@ -683,10 +711,10 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
       vb[i] = _mm512_loadu_ps(ADDRESS(B, k, i * 16, ldb));
     };
 
-    auto compute = [&va, &vb, &vc, A, m, COLS] (auto i, int k) {
-       const int line = i / COLS;
-       const int col = i % COLS;
-      if  (col == 0) {
+    auto compute = [&va, &vb, &vc, A, m] (auto i, int k) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
+      if constexpr (col == 0) {
         va = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + line, k, lda)));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va, vb[col], vc[INDEX(line, col, COLS)]);
@@ -704,9 +732,9 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
       compile_time_for<LINES * COLS>::op(compute, k+3);
     }
 
-    if  (K % 4) { // remain k
-       const int remain = K % 4;
-      if  (remain == 3) {
+    if constexpr (K % 4) { // remain k
+      constexpr const int remain = K % 4;
+      if constexpr (remain == 3) {
         compile_time_for<COLS>::op(loadb, K-3);
         compile_time_for<LINES * COLS>::op(compute, K-3);
         compile_time_for<COLS>::op(loadb, K-2);
@@ -714,22 +742,22 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
         compile_time_for<COLS>::op(loadb, K-1);
         compile_time_for<LINES * COLS>::op(compute, K-1);
       }
-      if  (remain == 2) {
+      if constexpr (remain == 2) {
         compile_time_for<COLS>::op(loadb, K-2);
         compile_time_for<LINES * COLS>::op(compute, K-2);
         compile_time_for<COLS>::op(loadb, K-1);
         compile_time_for<LINES * COLS>::op(compute, K-1);
       }
-      if  (remain == 1) {
+      if constexpr (remain == 1) {
         compile_time_for<COLS>::op(loadb, K-1);
         compile_time_for<LINES * COLS>::op(compute, K-1);
       }
     }
 
     // Store to C
-    auto store = [&vc, &C, m, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), vc[i]);
     };
 
@@ -737,14 +765,14 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
   } // end m
 
   // Deal with remaining rows
-  if  (M % LINES) {
-     const int lines = M % LINES;
+  if constexpr (M % LINES) {
+    constexpr const int lines = M % LINES;
 
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_loadu_ps(ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<lines * COLS>::op(loadc);
@@ -759,10 +787,10 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
       vb[i] = _mm512_loadu_ps(ADDRESS(B, k, i * 16, ldb));
     };
 
-    auto compute = [&va, &vb, &vc, A, m, COLS] (auto i, int k) {
-       const int line = i / COLS;
-       const int col = i % COLS;
-      if  (col == 0) {
+    auto compute = [&va, &vb, &vc, A, m] (auto i, int k) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
+      if constexpr (col == 0) {
         va = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + line, k, lda)));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va, vb[col], vc[INDEX(line, col, COLS)]);
@@ -775,26 +803,28 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
     }
 
     // Store to C
-    auto store = [&vc, &C, m, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), vc[i]);
     };
 
     compile_time_for<lines * COLS>::op(store);
   }
+
+  #undef COLS
 }
 
 // Small GEMM implemented as load B first
 template<int M, int N, bool ACC>
 void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int K) {
-   const int COLS = N / 16;
+  constexpr const int COLS = N / 16;
   //assert(N % 16 == 0);
 
   // How many lines of A are computed at the same time
-   const int max_lines = get_max_lines<COLS>();
-   const int loops = (M + max_lines - 1) / max_lines;
-   const int LINES = (M + loops - 1) / loops;
+  constexpr const int max_lines = get_max_lines<COLS>();
+  constexpr const int loops = (M + max_lines - 1) / max_lines;
+  constexpr const int LINES = (M + loops - 1) / loops;
 
   __m512 va;
   __m512 vb[COLS];
@@ -803,10 +833,10 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
   int m = 0;
   for (; m + LINES <= M; m += LINES) {
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, ldc, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m, ldc] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_loadu_ps(ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<LINES * COLS>::op(loadc);
@@ -821,10 +851,10 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
       vb[i] = _mm512_loadu_ps(ADDRESS(B, k, i * 16, ldb));
     };
 
-    auto compute = [&va, &vb, &vc, A, m, lda, COLS] (auto i, int k) {
-       const int line = i / COLS;
-       const int col = i % COLS;
-      if  (col == 0) {
+    auto compute = [&va, &vb, &vc, A, m, lda] (auto i, int k) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
+      if constexpr (col == 0) {
         va = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + line, k, lda)));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va, vb[col], vc[INDEX(line, col, COLS)]);
@@ -838,9 +868,9 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
     }
 
     // Store to C
-    auto store = [&vc, &C, m, ldc, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m, ldc] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), vc[i]);
     };
 
@@ -848,14 +878,14 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
   } // end m
 
   // Deal with remaining rows
-  if  (M % LINES) {
-     const int lines = M % LINES;
+  if (M % LINES) {
+    constexpr const int lines = M % LINES;
 
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, ldc, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m, ldc] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_loadu_ps(ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<lines * COLS>::op(loadc);
@@ -870,10 +900,10 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
       vb[i] = _mm512_loadu_ps(ADDRESS(B, k, i * 16, ldb));
     };
 
-    auto compute = [&va, &vb, &vc, A, m, lda, COLS] (auto i, int k) {
-       const int line = i / COLS;
-       const int col = i % COLS;
-      if  (col == 0) {
+    auto compute = [&va, &vb, &vc, A, m, lda] (auto i, int k) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
+      if constexpr (col == 0) {
         va = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + line, k, lda)));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va, vb[col], vc[INDEX(line, col, COLS)]);
@@ -887,9 +917,9 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
     }
 
     // Store to C
-    auto store = [&vc, &C, m, ldc, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m, ldc] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), vc[i]);
     };
 
@@ -901,13 +931,13 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
 // Similar with fixmn, unless the last column load/store with mask
 template<int M, int EXPANDED_N, bool ACC>
 void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int N, int K) {
-   const int COLS = EXPANDED_N / 16;
+  #define COLS (EXPANDED_N / 16)
   assert(EXPANDED_N % 16 == 0);
 
   // How many lines of A are computed at the same time
-   const int max_lines = get_max_lines<COLS>();
-   const int loops = (M + max_lines - 1) / max_lines;
-   const int LINES = (M + loops - 1) / loops;
+  constexpr const int max_lines = get_max_lines<COLS>();
+  constexpr const int loops = (M + max_lines - 1) / max_lines;
+  constexpr const int LINES = (M + loops - 1) / loops;
 
   // How many float numbers in last column
   const int floats = (N % 16 == 0 ? 16 : N % 16);
@@ -920,10 +950,10 @@ void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb,
   int m = 0;
   for (; m + LINES <= M; m += LINES) {
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, ldc, mask, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m, ldc, mask] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_mask_loadu_ps(vc[i], get_mask<EXPANDED_N, col>(mask), ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<LINES * COLS>::op(loadc);
@@ -938,10 +968,10 @@ void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb,
       vb[i] = _mm512_mask_loadu_ps(vb[i], get_mask<EXPANDED_N, i>(mask), ADDRESS(B, k, i * 16, ldb));
     };
 
-    auto compute = [&va, &vb, &vc, A, m, lda, COLS] (auto i, int k) {
-       const int line = i / COLS;
-       const int col = i % COLS;
-      if  (col == 0) {
+    auto compute = [&va, &vb, &vc, A, m, lda] (auto i, int k) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
+      if constexpr (col == 0) {
         va = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + line, k, lda)));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va, vb[col], vc[INDEX(line, col, COLS)]);
@@ -954,9 +984,9 @@ void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb,
     }
 
     // Store to C
-    auto store = [&vc, &C, m, ldc, mask, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m, ldc, mask] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_mask_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), get_mask<EXPANDED_N, col>(mask), vc[i]);
     };
 
@@ -964,14 +994,14 @@ void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb,
   } // end m
 
   // Deal with remaining rows
-  if  (M % LINES) {
-     const int lines = M % LINES;
+  if constexpr (M % LINES) {
+    constexpr const int lines = M % LINES;
 
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, ldc, mask, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m, ldc, mask] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_mask_loadu_ps(vc[i], get_mask<EXPANDED_N, col>(mask), ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<lines * COLS>::op(loadc);
@@ -986,10 +1016,10 @@ void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb,
       vb[i] = _mm512_mask_loadu_ps(vb[i], get_mask<EXPANDED_N, i>(mask), ADDRESS(B, k, i * 16, ldb));
     };
 
-    auto compute = [&va, &vb, &vc, A, m, lda, COLS] (auto i, int k) {
-       const int line = i / COLS;
-       const int col = i % COLS;
-      if  (col == 0) {
+    auto compute = [&va, &vb, &vc, A, m, lda] (auto i, int k) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
+      if constexpr (col == 0) {
         va = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + line, k, lda)));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va, vb[col], vc[INDEX(line, col, COLS)]);
@@ -1002,24 +1032,26 @@ void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb,
     }
 
     // Store to C
-    auto store = [&vc, &C, m, ldc, mask, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m, ldc, mask] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_mask_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), get_mask<EXPANDED_N, col>(mask), vc[i]);
     };
 
     compile_time_for<lines * COLS>::op(store);
   }
+
+  #undef COLS
 }
 
 // Small GEMM implemented as load B first
 template<int N, bool ACC>
 void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int M, int K) {
-   const int COLS = N / 16;
+  #define COLS (N / 16)
   assert(N % 16 == 0);
 
   // How many lines of A are computed at the same time
-   const int LINES = get_max_lines<COLS>();
+  constexpr const int LINES = get_max_lines<COLS>();
 
   __m512 va;
   __m512 vb[COLS];
@@ -1028,10 +1060,10 @@ void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb,
   int m = 0;
   for (; m + LINES <= M; m += LINES) {
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, ldc, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m, ldc] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_loadu_ps(ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<LINES * COLS>::op(loadc);
@@ -1046,10 +1078,10 @@ void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb,
       vb[i] = _mm512_loadu_ps(ADDRESS(B, k, i * 16, ldb));
     };
 
-    auto compute = [&va, &vb, &vc, A, m, lda, COLS] (auto i, int k) {
-       const int line = i / COLS;
-       const int col = i % COLS;
-      if  (col == 0) {
+    auto compute = [&va, &vb, &vc, A, m, lda] (auto i, int k) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
+      if constexpr (col == 0) {
         va = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + line, k, lda)));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va, vb[col], vc[INDEX(line, col, COLS)]);
@@ -1062,9 +1094,9 @@ void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb,
     }
 
     // Store to C
-    auto store = [&vc, &C, m, ldc, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m, ldc] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), vc[i]);
     };
 
@@ -1076,7 +1108,7 @@ void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb,
     const int lines = M - m;
 
     // Load from C or set to 0
-    if  (ACC) {
+    if constexpr (ACC) {
       #pragma unroll
       for (int i = 0; i < lines; ++i) {
         #pragma unroll
@@ -1116,16 +1148,18 @@ void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb,
       }
     }
   }
+
+  #undef COLS
 }
 
 // EXPANDED_N: expanded N to multiple of 16
 template<int EXPANDED_N, bool ACC>
 void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int M, int N, int K) {
-   const int COLS = EXPANDED_N / 16;
+  #define COLS (EXPANDED_N / 16)
   assert(EXPANDED_N % 16 == 0);
 
   // How many lines of A are computed at the same time
-   const int LINES = get_max_lines<COLS>();
+  constexpr const int LINES = get_max_lines<COLS>();
 
   // How many float numbers in last column
   const int floats = (N % 16 == 0 ? 16 : N % 16);
@@ -1138,10 +1172,10 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
   int m = 0;
   for (; m + LINES <= M; m += LINES) {
     // Load from C or set to 0
-    if  (ACC) {
-      auto loadc = [&vc, C, m, ldc, mask, COLS] (auto i) {
-         const int line = i / COLS;
-         const int col = i % COLS;
+    if constexpr (ACC) {
+      auto loadc = [&vc, C, m, ldc, mask] (auto i) {
+        constexpr const int line = decltype(i)::value / COLS;
+        constexpr const int col = decltype(i)::value % COLS;
         vc[i] = _mm512_mask_loadu_ps(vc[i], get_mask<EXPANDED_N, col>(mask), ADDRESS(C, m + line, col * 16, ldc));
       };
       compile_time_for<LINES * COLS>::op(loadc);
@@ -1156,10 +1190,10 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
       vb[i] = _mm512_mask_loadu_ps(vb[i], get_mask<EXPANDED_N, i>(mask), ADDRESS(B, k, i * 16, ldb));
     };
 
-    auto compute = [&va, &vb, &vc, A, m, lda, COLS] (auto i, int k) {
-       const int line = i / COLS;
-       const int col = i % COLS;
-      if  (col == 0) {
+    auto compute = [&va, &vb, &vc, A, m, lda] (auto i, int k) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
+      if constexpr (col == 0) {
         va = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS(A, m + line, k, lda)));
       }
       vc[INDEX(line, col, COLS)] = _mm512_fmadd_ps(va, vb[col], vc[INDEX(line, col, COLS)]);
@@ -1172,9 +1206,9 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
     }
 
     // Store to C
-    auto store = [&vc, &C, m, ldc, mask, COLS] (auto i) {
-       const int line = i / COLS;
-       const int col = i % COLS;
+    auto store = [&vc, &C, m, ldc, mask] (auto i) {
+      constexpr const int line = decltype(i)::value / COLS;
+      constexpr const int col = decltype(i)::value % COLS;
       _mm512_mask_storeu_ps(ADDRESS(C, m + line, col * 16, ldc), get_mask<EXPANDED_N, col>(mask), vc[i]);
     };
 
@@ -1186,7 +1220,7 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
     const int lines = M - m;
 
     // Load from C or set to 0
-    if  (ACC) {
+    if constexpr (ACC) {
       #pragma unroll
       for (int i = 0; i < lines; ++i) {
         #pragma unroll
@@ -1226,6 +1260,8 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
       }
     }
   } // end if
+  
+  #undef COLS
 } // end small_gemm_nofix
 
 } // end namespace lbf
@@ -1233,9 +1269,9 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
 
 template<int M, int N, int K, int lda, int ldb, int ldc, bool ACC>
 void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
-   auto COLS = N / 16;
+  constexpr const int COLS = N / 16;
 
-  if  (COLS <= 4) {
+  if constexpr (COLS <= 4) {
     lbf::small_gemm_fixmnk_fixldabc<M, N, K, lda, ldb, ldc, ACC>(A, B, C);
   } else {
     laf::small_gemm_fixmnk_fixldabc<M, N, K, lda, ldb, ldc, ACC>(A, B, C);
@@ -1244,9 +1280,9 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
 
 template<int M, int N, bool ACC>
 void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int K) {
-   auto COLS = N / 16;
+  constexpr const int COLS = N / 16;
 
-  if  (COLS <= 4) {
+  if constexpr (COLS <= 4) {
     lbf::small_gemm_fixmn<M, N, ACC>(A, B, C, lda, ldb, ldc, K);
   } else {
     laf::small_gemm_fixmn<M, N, ACC>(A, B, C, lda, ldb, ldc, K);
@@ -1255,9 +1291,9 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
 
 template<int N, bool ACC>
 void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int M, int K) {
-   auto COLS = N / 16;
+  constexpr const int COLS = N / 16;
 
-  if  (COLS <= 4) {
+  if constexpr (COLS <= 4) {
     lbf::small_gemm_fixn<N, ACC>(A, B, C, lda, ldb, ldc, M, K);
   } else {
     laf::small_gemm_fixn<N, ACC>(A, B, C, lda, ldb, ldc, M, K);
@@ -1266,7 +1302,7 @@ void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb,
 
 template<int M, bool ACC>
 void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int N, int K) {
-   const int max_supported_cols = 8;
+  constexpr const int max_supported_cols = 8;
   auto COLS = (N + 15) / 16;
 
   if (unlikely(N > max_supported_cols * 16)) {
@@ -1316,7 +1352,7 @@ void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb,
 
 template<bool ACC>
 void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int M, int N, int K) {
-   const int max_supported_cols = 8;
+  constexpr const int max_supported_cols = 8;
   auto COLS = (N + 15) / 16;
 
   if (unlikely(N > max_supported_cols * 16)) {
@@ -1363,5 +1399,3 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
     }
   }
 }
-
-#endif

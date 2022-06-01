@@ -4148,6 +4148,7 @@ tf_cc_test_mkl(
         ":ops_testutil",
         ":ops_util",
         ":mkl_matmul_op",
+        # ":tuning_matmul_op",
         "//tensorflow/cc:cc_ops",
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:framework",
@@ -5319,32 +5320,49 @@ tf_kernel_library(
 )
 
 cc_import(
-    name="libpta",
-    hdrs = [
+    name = "libpta",
+    hdrs = glob([
+        "tuning_ops/host/**/*.h",
+        # "tuning_ops/host/include/*.h",
+        # "tuning_ops/host/include/DataTypes/*.h",
+        # "tuning_ops/host/suite/Ackley/*.h",
+        # "tuning_ops/host/suite/ExpSinFunc/*.h",
+        # "tuning_ops/host/suite/NetworkAI/*.h",
+    ]),
+    shared_library = "tuning_ops/host/out/libpta.so",
+    visibility = ["//visibility:public"],
+)
 
+cc_library(
+    name="host_proxy",
+    hdrs = glob([
+        "tuning_ops/host_proxy/*.h",
+    ]),
+    srcs = glob([
+        "tuning_ops/host_proxy/*.cpp",
+    ]),
+    includes = [
+        "tuning_ops/host/include",
+        "tuning_ops/host/include/DataTypes",
+        "tuning_ops/host/suite/Ackley",
+        "tuning_ops/host/suite/ExpSinFunc",
+        "tuning_ops/host/suite/NetworkAI",
     ],
-    shared_library="libpta.so",
+    deps = [
+        ":libpta",
+    ]
 )
 
 tf_kernel_library(
     name = "tuning_matmul_op",
-    srcs = [
-        "tuning_ops/host_proxy.cpp",
-        "tuning_ops/host_proxy_manager.cpp",
-        "tuning_ops/tunable_matmul.cpp",
-        "tuning_ops/tuning_matmul_op.cc",
-    ],
+    srcs = glob([
+        "tuning_ops/*.cc",
+    ]),
     includes = [
         "tuning_ops/include",
-        "tuning_ops/host/include",
-        "tuning_ops/host/include/DataTypes",
+        "tuning_ops/host_proxy",
     ],
-    hdrs = [
-        "tuning_ops/host_proxy.h",
-        "tuning_ops/host_proxy_manager.h",
-        "tuning_ops/tunable_matmul.h",
-    ],
-    deps = ["//third_party/eigen3", ":libpta"] + DYNAMIC_DEPS + mkl_deps(),
+    deps = ["//third_party/eigen3", ":host_proxy"] + DYNAMIC_DEPS,
 )
 
 tf_cuda_library(

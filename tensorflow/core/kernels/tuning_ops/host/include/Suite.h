@@ -16,6 +16,7 @@
 
 #ifndef SUITE_H
 #define SUITE_H
+#include "VectorInt.h"
 #include "VectorFloat.h"
 #include "VectorString.h"
 
@@ -29,14 +30,27 @@ typedef enum SuiteCaseName {
 typedef struct Suite {
   SuiteCaseName name;
   Vector_String var;
+#if FLOAT_PARAM
   Vector_Float var_min;
   Vector_Float var_max;
+#else
+  Vector_Int var_min;
+  Vector_Int var_max;
+#endif
   Vector_Float fitness;
 
   Vector_Float (*target_func)(struct Suite *self);
+#if FLOAT_PARAM
   Vector_Float (*evaluate)(struct Suite *self, float *x);
+#else
+  Vector_Float (*evaluate)(struct Suite *self, int *x);
+#endif
   void (*get_var)(struct Suite *self);
+#if FLOAT_PARAM
   bool_t (*repair)(struct Suite *self, float *x);
+#else
+  bool_t (*repair)(struct Suite *self, int *x);
+#endif
   int (*parse)(struct Suite *self, int argc, char *argv[]);
 } Suite;
 void Suite_Ctor(Suite *self);
