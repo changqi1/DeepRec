@@ -617,6 +617,11 @@ public:
         return stat.avg_latency;
       };
 
+      char *algo = "GA";
+      int gens = 50;
+      int pops = 20;
+      my_host_proxy->SetAlgorithm(algo, gens, pops);
+
       for(auto param : space){
         my_host_proxy->SetParamter(param.name.c_str(), param.min_max_index.first, param.min_max_index.second);
       }

@@ -1040,6 +1040,15 @@ REGISTER_OP("_MklMatMul")
     .Attr("transpose_b: bool = false")
     .Attr("T: {bfloat16, float, double, complex64, complex128}")
     .SetShapeFn(shape_inference::MatMulShape);
+
+REGISTER_OP("TuningMatmul")
+    .Input("a: T")
+    .Input("b: T")
+    .Output("product: T")
+    .Attr("transpose_a: bool = false")
+    .Attr("transpose_b: bool = false")
+    .Attr("T: {float}")
+    .SetShapeFn(shape_inference::MatMulShape);
 #endif  // INTEL_MKL
 
 REGISTER_OP("SparseMatMul")

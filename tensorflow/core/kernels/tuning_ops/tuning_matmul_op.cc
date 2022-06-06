@@ -22,6 +22,7 @@ limitations under the License.
 #include "tensorflow/core/lib/core/threadpool.h"
 #include "tensorflow/core/util/env_var.h"
 #include "tensorflow/core/util/work_sharder.h"
+#include "tensorflow/core/util/mkl_util.h"
 
 #include <stdio.h>
 #include "tunable_matmul.h"
@@ -32,15 +33,6 @@ namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 
-REGISTER_OP("TuningMatmul")
-    .Input("a: T")
-    .Input("b: T")
-    .Output("product: T")
-    .Attr("transpose_a: bool = false")
-    .Attr("transpose_b: bool = false")
-    .Attr("T: {float}")
-    .SetShapeFn(shape_inference::MatMulShape);
-
 template <typename Device, typename T>
 class TuningMatMulOp : public OpKernel {
  public:
@@ -48,9 +40,9 @@ class TuningMatMulOp : public OpKernel {
     // TF_CHECK_OK(ReadBoolFromEnvVar("TF_TUNING_FILE",
     //                         /*default_val=*/false, &tune_));
     TF_CHECK_OK(ReadBoolFromEnvVar("TF_TUNING_ENABLE",
-                            /*default_val=*/false, &tune_));
+                            /*default_val=*/true, &tune_));
     TF_CHECK_OK(ReadBoolFromEnvVar("TF_TUNING_ENABLE_HOST",
-                            /*default_val=*/false, &host_));
+                            /*default_val=*/true, &host_));
     TF_CHECK_OK(ReadInt64FromEnvVar("TF_TUNING_MAX_ITER",
                             /*default_val=*/0, &max_iters_));
     TF_CHECK_OK(ReadInt64FromEnvVar("TF_TUNING_ITER_PRE_CYCLE",
@@ -132,7 +124,7 @@ class TuningMatMulOp : public OpKernel {
   void TuningGemm(OpKernelContext* ctx, bool transa, bool transb, const int m,
                   const int n, const int k, const float* a, const int lda,
                   const float* b, const int ldb, float* c, const int ldc) {
-    Timer t_;
+    // Timer t_;
     /*tmm compute*/
     tmm_->SetParams(m, n, k, lda, ldb, ldc, a, b, c);
 
@@ -161,7 +153,8 @@ class TuningMatMulOp : public OpKernel {
 // packed matmul
 REGISTER_KERNEL_BUILDER(Name("TuningMatmul")
                         .Device(DEVICE_CPU)
-                        .TypeConstraint<float>("T"),
+                        .TypeConstraint<float>("T")
+                        .Label(mkl_op_registry::kMklNameChangeOpLabel),
                         TuningMatMulOp<CPUDevice, float>);
 
 }  // namespace tensorflow

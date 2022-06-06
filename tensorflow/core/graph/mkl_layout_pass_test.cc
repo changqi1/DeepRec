@@ -5150,6 +5150,19 @@ TEST_F(MklLayoutPassTest, MatMul_Positive) {
             "A(Input);B(Input);C(_MklMatMul)|A->C;B->C:1");
 }
 
+TEST_F(MklLayoutPassTest, Tuning_MatMul_Positive) {
+  InitGraph(
+      "node { name: 'A' op: 'Input'}"
+      "node { name: 'B' op: 'Input'}"
+      "node { name: 'C' op: 'MatMul'"
+      " attr { key: 'T'      value { type: DT_FLOAT } }"
+      " attr { key: 'transpose_a'      value { b: false } }"
+      " attr { key: 'transpose_b'      value { b: false } }"
+      " input: ['A', 'B']}");
+  EXPECT_EQ(DoMklLayoutOptimizationPass(),
+            "A(Input);B(Input);C(TuningMatmul)|A->C;B->C:1");
+}
+
 TEST_F(MklLayoutPassTest, BatchMatMul_Positive) {
   InitGraph(
       "node { name: 'A' op: 'Input'}"

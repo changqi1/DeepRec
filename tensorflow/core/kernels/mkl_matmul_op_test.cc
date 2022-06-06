@@ -39,9 +39,9 @@ static Graph* Matmul(const string& kind, int m, int k, int n, bool transpose_a, 
   Graph* g = new Graph(OpRegistry::Global());
   DataType type = DataTypeToEnum<T>::v();
 
-  const bool isDefault = (kind == "Default");
+  const bool isDefault = (kind == "Tuning");
   // string op_name = isDefault ? "TuningMatmul" : "_MklMatMul";
-  string op_name = isDefault ? "MatMul" : "_MklMatMul";
+  string op_name = isDefault ? "TuningMatmul" : "_MklMatMul";
 
   Tensor in0(type, transpose_a ? TensorShape({k, m}) : TensorShape({m, k}));
   in0.flat<T>().setRandom();
@@ -55,9 +55,10 @@ static Graph* Matmul(const string& kind, int m, int k, int n, bool transpose_a, 
                     .Input(input_in0)
                     .Input(input_in1)
                     .Attr("transpose_a", transpose_a)
-                    .Attr("transpose_b", transpose_b);
+                    .Attr("transpose_b", transpose_b)
+                    .Attr("_kernel", "MklNameChangeOp");
 
-  isDefault ? nodeBuilder : nodeBuilder.Attr("_kernel", "MklNameChangeOp");
+  // isDefault ? nodeBuilder : nodeBuilder.Attr("_kernel", "MklNameChangeOp");
 
   TF_CHECK_OK(nodeBuilder.Finalize(g, nullptr));
 
@@ -76,13 +77,13 @@ static Graph* Matmul(const string& kind, int m, int k, int n, bool transpose_a, 
   BENCHMARK(BM_Matmul##_##kind##_##M##_##K##_##N##_##TA##_##TB##_##T##_##DEVICE##_##NTH);  \
 
 #define BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, NTH)     \
-  BM_Matmul_Base(Default, M, K, N, TA, TB, T, DEVICE, NTH); \
+  BM_Matmul_Base(Tuning, M, K, N, TA, TB, T, DEVICE, NTH);  \
   BM_Matmul_Base(Mkl, M, K, N, TA, TB, T, DEVICE, NTH);     \
 
 #define BM_Matmul_NTH(M, K, N, TA, TB, T, DEVICE) \
   BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 1);  \
-  // BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 4);  \
-  // BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 8);  \
+  BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 4);  \
+  BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 8);  \
 
 #define BM_Matmul(M, K, N, TA, TB)               \
   BM_Matmul_NTH(M, K, N, TA, TB, float, cpu);    \
