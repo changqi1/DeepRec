@@ -4148,7 +4148,7 @@ tf_cc_test_mkl(
         ":ops_testutil",
         ":ops_util",
         ":mkl_matmul_op",
-        # ":tuning_matmul_op",
+        ":tuning_matmul_op",
         "//tensorflow/cc:cc_ops",
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:framework",
@@ -4159,6 +4159,51 @@ tf_cc_test_mkl(
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
     ],
+)
+
+cc_import(
+    name = "libpta",
+    hdrs = glob([
+        "tuning_ops/host/**/*.h",
+    ]),
+    shared_library = "tuning_ops/host/libpta.so",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name="host_proxy",
+    hdrs = glob([
+        "tuning_ops/host_proxy/*.h",
+    ]),
+    srcs = glob([
+        "tuning_ops/host_proxy/*.cpp",
+    ]),
+    copts = ["-fexceptions"],
+    nocopts = "-fno-exceptions",
+    includes = [
+        "tuning_ops/host/include",
+        "tuning_ops/host/include/DataTypes",
+        "tuning_ops/host/suite/Ackley",
+        "tuning_ops/host/suite/ExpSinFunc",
+        "tuning_ops/host/suite/NetworkAI",
+    ],
+    deps = [
+        ":libpta",
+    ]
+)
+
+tf_kernel_library(
+    name = "tuning_matmul_op",
+    srcs = glob([
+        "tuning_ops/*.cc",
+    ]),
+    copts = ["-fexceptions", "-march=skylake-avx512"],
+    nocopts = "-fno-exceptions",
+    includes = [
+        "tuning_ops/include",
+        "tuning_ops/host_proxy",
+    ],
+    deps = ["//third_party/eigen3", ":host_proxy"] + DYNAMIC_DEPS + mkl_deps(),
 )
 
 tf_kernel_library(
@@ -5317,52 +5362,6 @@ tf_kernel_library(
     name = "fuserecv_ops",
     prefix = "fuserecv_ops",
     deps = REQUIRED_DEPS,
-)
-
-cc_import(
-    name = "libpta",
-    hdrs = glob([
-        "tuning_ops/host/**/*.h",
-        # "tuning_ops/host/include/*.h",
-        # "tuning_ops/host/include/DataTypes/*.h",
-        # "tuning_ops/host/suite/Ackley/*.h",
-        # "tuning_ops/host/suite/ExpSinFunc/*.h",
-        # "tuning_ops/host/suite/NetworkAI/*.h",
-    ]),
-    shared_library = "tuning_ops/host/out/libpta.so",
-    visibility = ["//visibility:public"],
-)
-
-cc_library(
-    name="host_proxy",
-    hdrs = glob([
-        "tuning_ops/host_proxy/*.h",
-    ]),
-    srcs = glob([
-        "tuning_ops/host_proxy/*.cpp",
-    ]),
-    includes = [
-        "tuning_ops/host/include",
-        "tuning_ops/host/include/DataTypes",
-        "tuning_ops/host/suite/Ackley",
-        "tuning_ops/host/suite/ExpSinFunc",
-        "tuning_ops/host/suite/NetworkAI",
-    ],
-    deps = [
-        ":libpta",
-    ]
-)
-
-tf_kernel_library(
-    name = "tuning_matmul_op",
-    srcs = glob([
-        "tuning_ops/*.cc",
-    ]),
-    includes = [
-        "tuning_ops/include",
-        "tuning_ops/host_proxy",
-    ],
-    deps = ["//third_party/eigen3", ":host_proxy"] + DYNAMIC_DEPS,
 )
 
 tf_cuda_library(
