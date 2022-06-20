@@ -105,14 +105,14 @@ config_setting(
 )
 
 config_setting(
-    # Add "--define tensorflow_mkldnn_contraction_kernel=0" to your build command to disable mkldnn
-    # sgemm in Eigen tensor contractions (matrix multiplications and convolutions). The mkldnn
-    # kernels are generated at runtime and use avx/avx2/fma/avx512 based on cpu status registers
+    # Add "--define tensorflow_dnnl_contraction_kernel=0" to your build command to disable dnnl
+    # sgemm in Eigen tensor contractions (matrix multiplications and convolutions). The dnnl
+    # kernels are generated at runtime and use amx/avx/avx2/fma/avx512 based on cpu status registers
     # (https://en.wikipedia.org/wiki/CPUID). Default Eigen contraction kernel is
     # Eigen::internal::gebp_kernel (general block-panel kernel).
-    name = "no_mkldnn_contraction_kernel",
+    name = "no_dnnl_contraction_kernel",
     values = {
-        "define": "tensorflow_mkldnn_contraction_kernel=0",
+        "define": "tensorflow_dnnl_contraction_kernel=0",
     },
 )
 
@@ -575,10 +575,14 @@ tf_cc_test(
     ],
 )
 
-cc_library(
+tf_kernel_library(
     name = "reshape_util",
     srcs = ["reshape_util.cc"],
     hdrs = ["reshape_util.h"],
+    gpu_srcs = [
+        "reshape_util.h",
+        "reshape_util.cu.cc"
+    ],
     deps = [
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
@@ -777,10 +781,10 @@ cc_library(
 # blocks of the original tensors).
 #
 # 1) Default:
-#    Use Mkldnn single threaded sgemm. The mkldnn kernels are generated at runtime and
-#    use avx/avx2/fma/avx512 based on cpu status registers (https://en.wikipedia.org/wiki/CPUID).
+#    Use OneDNN single threaded sgemm. The dnnl kernels are generated at runtime and
+#    use amx/avx/avx2/fma/avx512 based on cpu status registers (https://en.wikipedia.org/wiki/CPUID).
 #
-# 2) Eigen: --define tensorflow_mkldnn_contraction_kernel=0 (disable mkldnn)
+# 2) Eigen: --define tensorflow_dnnl_contraction_kernel=0 (disable dnnl)
 #    Use Eigen contraction kernel: Eigen::internal::gebp_kernel.
 #
 # If you use `tensor.contract(other_tensor)` in your code, you must include additional header
@@ -791,9 +795,9 @@ cc_library(
 #   #endif
 #
 # We define a two-level target because if we just add
-#   ":no_mkldnn_contraction_kernel": []
+#   ":no_dnnl_contraction_kernel": []
 # in the same select list with //third_party/tensorflow:{android,arm,ios,ppc},
-# there can be more than one match, e.g., when building for android and MKL-DNN
+# there can be more than one match, e.g., when building for android and OneDNN
 # contraction kernel is disabled. Bazel doesn't allow multiple matches.
 # See more details in
 #   https://github.com/tensorflow/tensorflow/issues/24414
@@ -801,7 +805,7 @@ cc_library(
     name = "eigen_contraction_kernel",
     hdrs = ["eigen_contraction_kernel.h"],
     deps = select({
-        ":no_mkldnn_contraction_kernel": [":eigen_contraction_kernel_no_mkl"],
+        ":no_dnnl_contraction_kernel": [":eigen_contraction_kernel_no_mkl"],
         "//conditions:default": [":eigen_contraction_kernel_with_mkl"],
     }),
 )
@@ -818,7 +822,7 @@ cc_library(
         "//tensorflow:linux_ppc64le": [],
         "//conditions:default": [
             "TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL",
-            "TENSORFLOW_USE_MKLDNN_CONTRACTION_KERNEL",
+            "TENSORFLOW_USE_DNNL_CONTRACTION_KERNEL",
         ],
     }),
     deps = [
@@ -1382,7 +1386,7 @@ tf_kernel_library(
     deps = if_cuda_or_rocm([
         ":cuda_solvers",
     ]) + if_cuda([
-        "@cub_archive//:cub",
+        "@local_config_cuda//cuda:cub_headers",
     ]) + if_rocm([
         "@rocprim_archive//:rocprim",
     ]) + ARRAY_DEPS,
@@ -2585,7 +2589,7 @@ tf_kernel_library(
     deps = DYNAMIC_DEPS + [
         ":fill_functor",
         ":gather_functor",
-    ] + if_cuda(["@cub_archive//:cub"]) + if_rocm([
+    ] + if_cuda(["@local_config_cuda//cuda:cub_headers"]) + if_rocm([
         "@rocprim_archive//:rocprim",
     ]),
 )
@@ -3065,14 +3069,14 @@ tf_kernel_library(
         "batched_non_max_suppression_op.cu.cc",
         "batched_non_max_suppression_op.h",
     ],
-    deps = IMAGE_DEPS + if_cuda(["@cub_archive//:cub"]) + [":transpose_functor"],
+    deps = IMAGE_DEPS + if_cuda(["@local_config_cuda//cuda:cub_headers"]) + [":transpose_functor"],
 )
 
 tf_kernel_library(
     name = "generate_box_proposals_op",
     gpu_srcs = ["generate_box_proposals_op.cu.cc"],
     deps = if_cuda([
-        "@cub_archive//:cub",
+        "@local_config_cuda//cuda:cub_headers",
         ":non_max_suppression_op_gpu",
     ]),
 )
@@ -3080,7 +3084,7 @@ tf_kernel_library(
 tf_kernel_library(
     name = "non_max_suppression_op",
     prefix = "non_max_suppression_op",
-    deps = IMAGE_DEPS + if_cuda(["@cub_archive//:cub"]),
+    deps = IMAGE_DEPS + if_cuda(["@local_config_cuda//cuda:cub_headers"]),
 )
 
 tf_kernel_library(
@@ -3170,17 +3174,17 @@ tf_cc_tests(
 # Conditional test target generation is not supported by the "tf_cc_tests" macro
 # (can't add 'select' to the srcs field, type 'select' is not iterable).
 tf_cc_test(
-    name = "eigen_mkldnn_contraction_kernel_test",
+    name = "eigen_dnnl_contraction_kernel_test",
     size = "small",
     srcs = select({
         "//tensorflow:android": [],
         "//tensorflow:arm": [],
         "//tensorflow:ios": [],
         "//tensorflow:linux_ppc64le": [],
-        ":no_mkldnn_contraction_kernel": [],
-        "//conditions:default": ["eigen_mkldnn_contraction_kernel_test.cc"],
+        ":no_dnnl_contraction_kernel": [],
+        "//conditions:default": ["eigen_dnnl_contraction_kernel_test.cc"],
     }),
-    tags = ["mkldnn_contraction_kernel"],
+    tags = ["dnnl_contraction_kernel"],
     deps = [
         ":eigen_contraction_kernel",
         "//tensorflow/core:test",
@@ -3324,6 +3328,22 @@ tf_cuda_cc_test(
     srcs = ["adjust_contrast_op_benchmark_test.cc"],
     deps = [
         ":image",
+        ":ops_testutil",
+        ":ops_util",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+    ],
+)
+
+tf_cuda_cc_test(
+    name = "sparse_reshape_op_benchmark_test",
+    srcs = ["sparse_reshape_op_benchmark_test.cc"],
+    deps = [
+        ":sparse_reshape_op",
         ":ops_testutil",
         ":ops_util",
         "//tensorflow/core:core_cpu",
@@ -4144,7 +4164,7 @@ tf_kernel_library(
     gpu_srcs = ["reduction_gpu_kernels.cu.h"],
     prefix = "reduction_ops",
     deps = MATH_DEPS + [":transpose_functor"] + if_cuda([
-        "@cub_archive//:cub",
+        "@local_config_cuda//cuda:cub_headers",
     ]) + if_rocm([
         "@rocprim_archive//:rocprim",
     ]),
@@ -4173,7 +4193,7 @@ tf_kernel_library(
         "scan_ops_gpu_int.cu.cc",
     ],
     deps = MATH_DEPS + if_cuda([
-        "@cub_archive//:cub",
+        "@local_config_cuda//cuda:cub_headers",
     ]) + if_rocm([
         "@rocprim_archive//:rocprim",
     ]),
@@ -4408,11 +4428,15 @@ tf_cc_test(
     size = "small",
     srcs = ["segment_reduction_ops_test.cc"],
     deps = [
+        "//tensorflow/cc:cc_ops_internal",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/core:framework_internal",
         ":host_constant_op",
         ":ops_testutil",
         ":ops_util",
         ":segment_reduction_ali_ops",
         ":segment_reduction_ops",
+        "//tensorflow/core:tensorflow",
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:core_cpu_internal",
         "//tensorflow/core:framework",
@@ -4421,6 +4445,7 @@ tf_cc_test(
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
+        "//tensorflow/core:ops",
     ],
 )
 
@@ -4609,7 +4634,7 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
     ] + if_cuda([
-        "@cub_archive//:cub",
+        "@local_config_cuda//cuda:cub_headers",
         "@local_config_cuda//cuda:cudnn_header",
     ]) + if_rocm([
         "@rocprim_archive//:rocprim",
@@ -4700,7 +4725,7 @@ tf_kernel_library(
     ] + if_cuda_or_rocm([
         ":reduction_ops",
     ]) + if_cuda([
-        "@cub_archive//:cub",
+        "@local_config_cuda//cuda:cub_headers",
         "//tensorflow/core:stream_executor",
         "//tensorflow/stream_executor/cuda:cuda_stream",
     ]) + if_rocm([
@@ -4781,7 +4806,7 @@ tf_kernel_library(
     deps = NN_DEPS + if_cuda_or_rocm([
         ":reduction_ops",
     ]) + if_cuda([
-        "@cub_archive//:cub",
+        "@local_config_cuda//cuda:cub_headers",
     ]) + if_rocm([
         "@rocprim_archive//:rocprim",
     ]),
@@ -4817,7 +4842,7 @@ tf_kernel_library(
         "topk_op_gpu_uint8.cu.cc",
     ],
     deps = NN_DEPS + if_cuda([
-        "@cub_archive//:cub",
+        "@local_config_cuda//cuda:cub_headers",
     ]) + if_rocm([
         "@rocprim_archive//:rocprim",
     ]),
@@ -4843,7 +4868,7 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
         "//third_party/eigen3",
-    ] + if_cuda(["@cub_archive//:cub"]) + if_rocm([
+    ] + if_cuda(["@local_config_cuda//cuda:cub_headers"]) + if_rocm([
         "@rocprim_archive//:rocprim",
     ]),
 )
@@ -4856,7 +4881,7 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
         "//third_party/eigen3",
-    ] + if_cuda(["@cub_archive//:cub"]) + if_rocm([
+    ] + if_cuda(["@local_config_cuda//cuda:cub_headers"]) + if_rocm([
         "@rocprim_archive//:rocprim",
     ]),
 )
@@ -4871,7 +4896,7 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
         "//tensorflow/core:nn_grad",
-    ] + if_cuda(["@cub_archive//:cub"]) + if_rocm([
+    ] + if_cuda(["@local_config_cuda//cuda:cub_headers"]) + if_rocm([
         "@rocprim_archive//:rocprim",
     ]),
 )
@@ -5593,7 +5618,7 @@ tf_kernel_library(
     ] + if_cuda_or_rocm([
         ":reduction_ops",
     ]) + if_cuda([
-        "@cub_archive//:cub",
+        "@local_config_cuda//cuda:cub_headers",
     ]) + if_rocm([
         "@rocprim_archive//:rocprim",
     ]),
@@ -6202,6 +6227,7 @@ tf_kernel_library(
         "training_ali_ops_gpu.cu.cc",
         "training_ali_ops_gpu.h",
     ],
+    copts = ["-g"],
     deps = [
         ":bounds_check",
         ":training_op_helpers",
@@ -6228,7 +6254,7 @@ tf_kernel_library(
     ] + if_cuda_or_rocm([
         ":reduction_ops",
     ]) + if_cuda([
-        "@cub_archive//:cub",
+        "@local_config_cuda//cuda:cub_headers",
     ]) + if_rocm([
         "@rocprim_archive//:rocprim",
     ]),

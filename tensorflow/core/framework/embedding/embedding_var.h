@@ -61,7 +61,27 @@ class EmbeddingVar : public ResourceBase {
       default_value_(nullptr),
       value_len_(0),
       alloc_(nullptr),
-      emb_config_(emb_cfg) {}
+      emb_config_(emb_cfg) {
+        if (IsMultiLevel() || emb_config_.record_freq) {
+          add_freq_fn_ = [](ValuePtr<V>* value_ptr, int freq, int64 filter_freq) {
+            value_ptr->AddFreq(freq);
+          };
+        } else if (emb_config_.is_counter_filter()) {
+          add_freq_fn_ = [](ValuePtr<V>* value_ptr, int freq, int64 filter_freq) {
+            if (value_ptr->GetFreq() < filter_freq)
+              value_ptr->AddFreq(freq);
+          };
+        } else {
+          add_freq_fn_ = [](ValuePtr<V>* value_ptr, int freq, int64 filter_freq) {};
+        }
+        if (emb_config_.steps_to_live != 0 || emb_config_.record_version){
+          update_version_fn_ = [](ValuePtr<V>* value_ptr, int64 gs) {
+            value_ptr->SetStep(gs);
+          };
+        } else {
+          update_version_fn_ = [](ValuePtr<V>* value_ptr, int64 gs) {};
+        }
+      }
 
   Status Init(const Tensor& default_tensor, int64 default_value_dim) {
     filter_ = FilterFactory::CreateFilter<K, V, EmbeddingVar<K, V>>(emb_config_, this, storage_manager_);
@@ -93,18 +113,18 @@ class EmbeddingVar : public ResourceBase {
     return is_initialized_;
   }
 
-  Status LookupOrCreateKey(K key, ValuePtr<V>** value_ptr, bool* is_filter,
-      int64 update_version = -1) {
-    return filter_->LookupOrCreateKey(key, value_ptr, is_filter, update_version);
+  Status LookupOrCreateKey(K key, ValuePtr<V>** value_ptr, bool* is_filter) {
+    return filter_->LookupOrCreateKey(key, value_ptr, is_filter);
   }
 
-  Status LookupOrCreateKey(K key, ValuePtr<V>** value_ptr, int64 update_version = -1) {
+  Status LookupOrCreateKey(K key, ValuePtr<V>** value_ptr) {
     Status s = storage_manager_->GetOrCreate(key, value_ptr, emb_config_.total_num(storage_manager_->GetAllocLen()));
     TF_CHECK_OK(s);
-    if (emb_config_.is_primary() && emb_config_.steps_to_live != 0 && update_version != -1) {
-      (*value_ptr)->SetStep(update_version);
-    }
     return s;
+  }
+
+  void UpdateVersion(ValuePtr<V>* value_ptr, int64 gs) {
+    update_version_fn_(value_ptr, gs);
   }
 
   void BatchCommit(std::vector<K> keys, std::vector<ValuePtr<V>*> value_ptrs) {
@@ -121,19 +141,11 @@ class EmbeddingVar : public ResourceBase {
     return filter_->GetFreq(key);
   }
 
-  void LookupOrCreate(K key, V* val, V* default_v)  {
+  void LookupOrCreate(K key, V* val, V* default_v, int count = 1)  {
     const V* default_value_ptr = (default_v == nullptr) ? default_value_ : default_v;
-    filter_->LookupOrCreate(key, val, default_value_ptr);
-  }
-
-  void LookupOrCreateWithFreq(K key, V* val, V* default_v)  {
-    const V* default_value_ptr = (default_v == nullptr) ? default_value_ : default_v;
-    filter_->LookupOrCreateWithFreq(key, val, default_value_ptr);
-  }
-
-  void LookupOrCreate(K key, V* val, V* default_v, int64 count)  {
-    const V* default_value_ptr = (default_v == nullptr) ? default_value_ : default_v;
-    filter_->LookupOrCreate(key, val, default_value_ptr, count);
+    ValuePtr<V>* value_ptr = nullptr;
+    filter_->LookupOrCreate(key, val, default_value_ptr, &value_ptr, count);
+    add_freq_fn_(value_ptr, count, emb_config_.filter_freq);
   }
 
   V* LookupOrCreateEmb(ValuePtr<V>* value_ptr, const V* default_v) {
@@ -179,6 +191,14 @@ class EmbeddingVar : public ResourceBase {
 
   bool IsMultiLevel() {
     return storage_manager_->IsMultiLevel();
+  }
+
+  bool IsRecordFreq() {
+    return emb_config_.record_freq;
+  }
+
+  bool IsRecordVersion() {
+    return emb_config_.record_version;
   }
 
   std::string DebugString() const {
@@ -267,6 +287,8 @@ class EmbeddingVar : public ResourceBase {
   embedding::StorageManager<K, V>* storage_manager_;
   EmbeddingConfig emb_config_;
   EmbeddingFilter<K, V, EmbeddingVar<K, V>>* filter_;
+  std::function<void(ValuePtr<V>*, int, int64)> add_freq_fn_;
+  std::function<void(ValuePtr<V>*, int64)> update_version_fn_;
 
   ~EmbeddingVar() override {
     // When dynamic dimension embedding is used, there will be more than one primary slot

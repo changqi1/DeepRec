@@ -31,6 +31,7 @@ Dynamic-dimension-Embedding-Variable
 Adaptive-Embedding
 Multi-Hash-Variable
 Embedding-Variable-GPU
+Multi-tier-Embedding-Storage
 ```
 
 ```{toctree}
@@ -83,11 +84,18 @@ AdagradDecay-Optimizer
 :maxdepth: 2
 :caption: 算子及硬件加速
 
+oneDNN
 Operator-Optimization
 NVIDIA-TF32
-oneDNN
 PMEM
 Embedding-on-PMEM
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: 模型量化
+
+BFloat16
 ```
 
 ```{toctree}
@@ -109,7 +117,8 @@ XLA
 
 ```{toctree}
 :maxdepth: 2
-:caption: 线上Serving
+:caption: Inference优化
 
 Processor
+SessionGroup
 ```
