@@ -1,6 +1,6 @@
 #test image
-deeprec_test_image: cesg-prc-registry.cn-beijing.cr.aliyuncs.com/cesg-ali/deeprec-modelzoo:latest
-tf_test_image: cesg-prc-registry.cn-beijing.cr.aliyuncs.com/cesg-ali/deeprec-modelzoo:tf
+deeprec_test_image: alideeprec/deeprec-release-modelzoo:latest
+tf_test_image: alideeprec/deeprec-weekly-modelzoo:tf
 
 #test model default: [WDL, DLRM ,DeepFM, DSSM, DIEN, DIN]
 test_model: 
@@ -31,6 +31,7 @@ model_batchsize:
   BST: 512
   
 #args for deeprec
+#like --emb_fusion true
 modelArgs:
 
 #tf on/off
@@ -38,6 +39,10 @@ stocktf: on
 
 # set cpu
 cpu_sets: 
+
+# set gpu
+gpu_sets: 
+
 
 # env config 
 env_var:
