@@ -53,11 +53,12 @@ function make_script()
         log_tag=$(echo $paras| sed 's/--/_/g' | sed 's/ //g')
         [[ $paras == "" ]] && log_tag=""
         model_name=$line
+        bs=$(cat config.yaml | shyaml get-value model_batchsize | grep $model_name | awk -F ":" '{print $2}')
         echo "echo 'Testing $model_name  $paras ...'" >> $script
         echo "cd /root/modelzoo/$model_name/" >> $script
         [[ ! -d  $checkpoint_dir/$currentTime/${model_name,,}_script$$log_tag ]]\
         &&mkdir -p $checkpoint_dir/$currentTime/${model_name,,}_$script$log_tag
-        newline="LD_PRELOAD=/root/modelzoo/libjemalloc.so.2.5.1 python train.py \$cat_param $paras  --checkpoint /benchmark_result/checkpoint/$currentTime/${model_name,,}_\${category}$log_tag  >/benchmark_result/log/$currentTime/${model_name,,}_\${category}$log_tag.log 2>&1"
+        newline="LD_PRELOAD=/root/modelzoo/libjemalloc.so.2.5.1 python train.py --batch_size $bs \$cat_param $paras  --checkpoint /benchmark_result/checkpoint/$currentTime/${model_name,,}_\${category}$log_tag  >/benchmark_result/log/$currentTime/${model_name,,}_\${category}$log_tag.log 2>&1"
         echo $newline >> $script
     done
 }
@@ -112,7 +113,7 @@ function runSingleContainer()
 
     container_name=$(echo $2 | awk -F "." '{print $1}')
     host_path=$(cd benchmark_result && pwd)
-    sudo docker run -it $cpu_optional $gpu_optional \
+    sudo docker run -it $optional \
                 --rm \
                 --name $container_name-$short_time \
                 -v $host_path:/benchmark_result/\
@@ -156,9 +157,6 @@ stocktf=$(cat $config_file | shyaml get-value stocktf)
 # cpus
 cpus=$(cat $config_file | shyaml get-value cpu_sets)
 
-# gpus
-gpus=$(cat $config_file | shyaml get-value gpu_sets)
-
 # image name
 deeprec_test_image=$(cat $config_file | shyaml get-value deeprec_test_image)
 tf_test_image=$(cat $config_file | shyaml get-value tf_test_image)
@@ -173,8 +171,7 @@ if [[ ! -f $config_file ]];then
 fi
 
 [[ $modelArgs == None ]] && modelArgs=
-[[ $cpus != None ]] && cpu_optional="--cpuset-cpus $cpus"
-[[ $gpus != None ]] && gpu_optional="--gpus $gpus"
+[[ $cpus != None ]] && optional="--cpuset-cpus $cpus"
 [ ! -d $log_dir/$currentTime ] && mkdir -p "$log_dir/$currentTime"
 [ ! -d $checkpoint_dir/$currentTime ] && mkdir -p "$checkpoint_dir/$currentTime"
 
