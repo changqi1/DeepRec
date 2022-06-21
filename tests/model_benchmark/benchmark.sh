@@ -156,6 +156,7 @@ stocktf=$(cat $config_file | shyaml get-value stocktf)
 
 # cpus
 cpus=$(cat $config_file | shyaml get-value cpu_sets)
+
 # gpus
 gpus=$(cat $config_file | shyaml get-value gpu_sets)
 

@@ -13,6 +13,7 @@ def get_arg_parser():
                         default='./')
     return parser
 
+
 def read_config():
     bs_dic = {}
     cur_path = os.path.dirname(os.path.realpath(__file__))
@@ -24,7 +25,6 @@ def read_config():
         stock_tf = config["stocktf"]
         for model in models:
             bs_dic[model]=config['model_batchsize'][model]
-
             
         print("=" * 30)
         print('%-20s%s'%("Model", "batch_size"))
@@ -33,19 +33,19 @@ def read_config():
         print("=" * 30)
     return stock_tf, bs_dic, models
 
+
 if __name__ == "__main__":
     stock_tf, bs_dic, models = read_config()
     parser = get_arg_parser()
     args = parser.parse_args()
     log_dir = args.log_dir
+
     log_list = []
     result={}
-
     for root, dirs, files in os.walk(log_dir, topdown=False):
         for name in files:
             if os.path.splitext(name)[1] == '.log':
                 log_list.append(os.path.join(root, name))
-
     acc_dic = {}
     auc_dic = {}
     gstep_dic = {}
@@ -101,6 +101,7 @@ if __name__ == "__main__":
                 elif "deeprec_bf16" in gstep_key:
                     total_dic[model]["gstep"]["deeprec_bf16"]=gstep_dic[gstep_key]            
 
+
     upgrade_dic = {}
     for model in models:
         upgrade_dic[model] = {}
@@ -110,12 +111,14 @@ if __name__ == "__main__":
             upgrade_dic[model]['deeprec_bf16'] = total_dic[model]['gstep']['deeprec_bf16'] / total_dic[model]['gstep']['tf_fp32'] 
 
     if stock_tf:
-        print("%-5s\t %10s\t %-10s\t %-10s\t %-11s\t %10s\t %10s\t %11s" %('Model', 'FrameWork', 'Datatype', 'ACC', 'AUC', 'Gstep', 'Throughput', 'SpeedUp'))    
+        print("%-5s\t %10s\t %-10s\t %-10s\t %-11s\t %10s\t %10s\t %11s" %('Model', 'FrameWork', 'Datatype', 'ACC', 'AUC', 'Gstep', 'Throughput', 'Speedup'))    
         for model in total_dic.keys():
             print(model+':')
             print("%-5s\t %10s\t %-10s\t %-10.6f\t %-5.6f\t %10.2f\t %10.2f\t %11s" %('', 'StockTF', 'FP32',  total_dic[model]['acc']['tf_fp32'], total_dic[model]['auc']['tf_fp32'], total_dic[model]['gstep']['tf_fp32'], total_dic[model]['gstep']['tf_fp32']*bs_dic[model], upgrade_dic[model]['tf_fp32']))
             print("%-5s\t %10s\t %-10s\t %-10.6f\t %-5.6f\t %10.2f\t %10.2f\t %10.2f%%" %('', 'DeepRec', 'FP32',  total_dic[model]['acc']['deeprec_fp32'], total_dic[model]['auc']['deeprec_fp32'], total_dic[model]['gstep']['deeprec_fp32'], total_dic[model]['gstep']['deeprec_fp32']*bs_dic[model], upgrade_dic[model]['deeprec_fp32']*100))
             print("%-5s\t %10s\t %-10s\t %-10.6f\t %-5.6f\t %10.2f\t %10.2f\t %10.2f%%" %('', 'DeepRec', 'BF16',  total_dic[model]['acc']['deeprec_bf16'], total_dic[model]['auc']['deeprec_bf16'], total_dic[model]['gstep']['deeprec_bf16'], total_dic[model]['gstep']['deeprec_bf16']*bs_dic[model], upgrade_dic[model]['deeprec_bf16']*100))          
+    
+    
     else:
         print("%-5s\t %10s\t %-10s\t %-10s\t %-11s\t %10s\t %10s\t" %('Model', 'FrameWork', 'Datatype', 'ACC', 'AUC', 'Gstep', 'Throughput'))
         for model in total_dic.keys():
