@@ -12,6 +12,15 @@
 #include "sgemm_kernel.h"
 #include "host_proxy_manager.h"
 
+#include "tensorflow/core/lib/core/threadpool.h"
+
+
+namespace tensorflow {
+namespace thread {
+class ThreadPool;
+}
+}
+
 #define CACHELINE_SIZE 64
 #define MAX_GROUP_LIMIT 8
 
@@ -75,6 +84,8 @@ struct MatmulSize
   int mblocks_per_group;
   int nblocks_per_group;
   int kblocks_per_group;
+
+  tensorflow::thread::ThreadPool* thread_pool;
 };
 
 // Inner implementation of matmul
@@ -112,12 +123,46 @@ struct MatmulConfig
 #define G_N 4
 #define G_K 5
 
+#define SET_KERNELS(bm, bn)                                            \
+    kernels.kernel_fixmn_acc = small_gemm_fixmn<(bm), (bn), true>;     \
+    kernels.kernel_fixmn_nonacc = small_gemm_fixmn<(bm), (bn), false>; \
+    kernels.kernel_fixm_acc = small_gemm_fixm<(bm), true>;             \
+    kernels.kernel_fixm_nonacc = small_gemm_fixm<(bm), false>;         \
+    kernels.kernel_fixn_acc = small_gemm_fixn<(bn), true>;             \
+    kernels.kernel_fixn_nonacc = small_gemm_fixn<(bn), false>;
+
+#define SET_KERNELS_ENUM_BN(bm)                       \
+    if (bn == 32)                                     \
+    {                                                 \
+        SET_KERNELS((bm), 32);                        \
+    }                                                 \
+    else if (bn == 48)                                \
+    {                                                 \
+        SET_KERNELS((bm), 48);                        \
+    }                                                 \
+    else if (bn == 64)                                \
+    {                                                 \
+        SET_KERNELS((bm), 64);                        \
+    }                                                 \
+    else if (bn == 80)                                \
+    {                                                 \
+        SET_KERNELS((bm), 80);                        \
+    }                                                 \
+    else                                              \
+    {                                                 \
+        printf("Unsupported kernel for bn=%d\n", bn); \
+        exit(-1);                                     \
+    }
+
+
 #define LOOP0 for (int kg = 0; kg < mmsize.kgroups; ++kg)
 #define LOOP1 for (int ig = 0; ig < mmsize.mgroups; ++ig)
 #define LOOP2 for (int jg = 0; jg < mmsize.ngroups; ++jg)
 #define LOOP3 for (int i = 0; i < mmsize.mblocks_per_group; ++i)
 #define LOOP4 for (int j = 0; j < mmsize.nblocks_per_group; ++j)
 #define LOOP5 for (int k = 0; k < mmsize.kblocks_per_group; ++k)
+
+#define LOOPE { task_pool_param.push_back(std::make_tuple(kg, ig, jg, i, j, k)); }
 
 // Equals to: #pragma omp parallel for collapse(4)
 #define PARALLEL_C4 _Pragma("omp parallel for collapse(4)")
@@ -126,209 +171,133 @@ struct MatmulConfig
 #define FUNC_DEF_HEAD(name)                                                                             \
   static void name(const T *A, const T *B, T *C, const MatmulSize &mmsize, const SmallKernels &kernels) \
   {                                                                                                     \
+    std::vector<std::tuple<int, int, int, int, int, int>> task_pool_param(                              \
+      mmsize.kgroups * mmsize.mgroups * mmsize.ngroups                                                  \
+      * mmsize.mblocks_per_group * mmsize.nblocks_per_group * mmsize.kblocks_per_group);                \
     for (int kg = 0; kg < mmsize.kgroups; ++kg)                                                         \
-    {                                                                                                   \
       PARALLEL_C4
 
 #define FUNC_DEF_HEAD2(name)                                                                            \
   static void name(const T *A, const T *B, T *C, const MatmulSize &mmsize, const SmallKernels &kernels) \
   {                                                                                                     \
+    std::vector<std::tuple<int, int, int, int, int, int>> task_pool_param(                              \
+      mmsize.kgroups * mmsize.mgroups * mmsize.ngroups                                                  \
+      * mmsize.mblocks_per_group * mmsize.nblocks_per_group * mmsize.kblocks_per_group);                \
     for (int kg = 0; kg < mmsize.kgroups; ++kg)                                                         \
-    {                                                                                                   \
       PARALLEL_C2
 
-#define FUNC_DEF_TAIL                                                                                            \
-  {                                                                                                              \
-    int i_off = (ig * mmsize.mblocks_per_group + i) * mmsize.bm;                                                 \
-    int j_off = (jg * mmsize.nblocks_per_group + j) * mmsize.bn;                                                 \
-    int k_off = (kg * mmsize.kblocks_per_group + k) * mmsize.bk;                                                 \
-    if (i_off < mmsize.m && j_off < mmsize.n && k_off < mmsize.k)                                                \
-    {                                                                                                            \
-      int realbm = mmsize.m - i_off >= mmsize.bm ? mmsize.bm : (mmsize.m - i_off);                               \
-      int realbn = mmsize.n - j_off >= mmsize.bn ? mmsize.bn : (mmsize.n - j_off);                               \
-      int realbk = mmsize.k - k_off >= mmsize.bk ? mmsize.bk : (mmsize.k - k_off);                               \
-      const T *pa = &A[i_off * mmsize.lda + k_off];                                                              \
-      const T *pb = &B[k_off * mmsize.ldb + j_off];                                                              \
-      T *pc = &C[i_off * mmsize.ldc + j_off];                                                                    \
-      if (realbm == mmsize.bm)                                                                                   \
-      {                                                                                                          \
-        if (realbn == mmsize.bn)                                                                                 \
-        {                                                                                                        \
-          if (k_off != 0)                                                                                        \
-          {                                                                                                      \
-            kernels.kernel_fixmn_acc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbk);                    \
-          }                                                                                                      \
-          else                                                                                                   \
-          {                                                                                                      \
-            kernels.kernel_fixmn_nonacc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbk);                 \
-          }                                                                                                      \
-        }                                                                                                        \
-        else                                                                                                     \
-        {                                                                                                        \
-          if (k_off != 0)                                                                                        \
-          {                                                                                                      \
-            kernels.kernel_fixm_acc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbn, realbk);             \
-          }                                                                                                      \
-          else                                                                                                   \
-          {                                                                                                      \
-            kernels.kernel_fixm_nonacc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbn, realbk);          \
-          }                                                                                                      \
-        }                                                                                                        \
-      }                                                                                                          \
-      else                                                                                                       \
-      {                                                                                                          \
-        if (realbn == mmsize.bn)                                                                                 \
-        {                                                                                                        \
-          if (k_off != 0)                                                                                        \
-          {                                                                                                      \
-            kernels.kernel_fixn_acc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbm, realbk);             \
-          }                                                                                                      \
-          else                                                                                                   \
-          {                                                                                                      \
-            kernels.kernel_fixn_nonacc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbm, realbk);          \
-          }                                                                                                      \
-        }                                                                                                        \
-        else                                                                                                     \
-        {                                                                                                        \
-          if (k_off != 0)                                                                                        \
-          {                                                                                                      \
-            kernels.kernel_nofix_acc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbm, realbn, realbk);    \
-          }                                                                                                      \
-          else                                                                                                   \
-          {                                                                                                      \
-            kernels.kernel_nofix_nonacc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbm, realbn, realbk); \
-          }                                                                                                      \
-        }                                                                                                        \
-      }                                                                                                          \
-    }                                                                                                            \
-  }                                                                                                              \
-  }                                                                                                              \
-  }
+#define FUNC_DEF_TAIL                                                                                              \
+  auto _worker = [&](int64_t begin, int64_t end) -> void {                                                         \
+    for(int index=begin; index < end; index++){                                                                    \
+      int kg, ig, jg, i, j, k;                                                                                     \
+      std::tie(kg, ig, jg, i, j, k) = task_pool_param[index];                                                      \
+      int i_off = (ig * mmsize.mblocks_per_group + i) * mmsize.bm;                                                 \
+      int j_off = (jg * mmsize.nblocks_per_group + j) * mmsize.bn;                                                 \
+      int k_off = (kg * mmsize.kblocks_per_group + k) * mmsize.bk;                                                 \
+      if (i_off < mmsize.m && j_off < mmsize.n && k_off < mmsize.k)                                                \
+      {                                                                                                            \
+        int realbm = mmsize.m - i_off >= mmsize.bm ? mmsize.bm : (mmsize.m - i_off);                               \
+        int realbn = mmsize.n - j_off >= mmsize.bn ? mmsize.bn : (mmsize.n - j_off);                               \
+        int realbk = mmsize.k - k_off >= mmsize.bk ? mmsize.bk : (mmsize.k - k_off);                               \
+        const T *pa = &A[i_off * mmsize.lda + k_off];                                                              \
+        const T *pb = &B[k_off * mmsize.ldb + j_off];                                                              \
+        T *pc = &C[i_off * mmsize.ldc + j_off];                                                                    \
+        if (realbm == mmsize.bm)                                                                                   \
+        {                                                                                                          \
+          if (realbn == mmsize.bn)                                                                                 \
+          {                                                                                                        \
+            if (k_off != 0)                                                                                        \
+            {                                                                                                      \
+              kernels.kernel_fixmn_acc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbk);                    \
+            }                                                                                                      \
+            else                                                                                                   \
+            {                                                                                                      \
+              kernels.kernel_fixmn_nonacc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbk);                 \
+            }                                                                                                      \
+          }                                                                                                        \
+          else                                                                                                     \
+          {                                                                                                        \
+            if (k_off != 0)                                                                                        \
+            {                                                                                                      \
+              kernels.kernel_fixm_acc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbn, realbk);             \
+            }                                                                                                      \
+            else                                                                                                   \
+            {                                                                                                      \
+              kernels.kernel_fixm_nonacc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbn, realbk);          \
+            }                                                                                                      \
+          }                                                                                                        \
+        }                                                                                                          \
+        else                                                                                                       \
+        {                                                                                                          \
+          if (realbn == mmsize.bn)                                                                                 \
+          {                                                                                                        \
+            if (k_off != 0)                                                                                        \
+            {                                                                                                      \
+              kernels.kernel_fixn_acc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbm, realbk);             \
+            }                                                                                                      \
+            else                                                                                                   \
+            {                                                                                                      \
+              kernels.kernel_fixn_nonacc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbm, realbk);          \
+            }                                                                                                      \
+          }                                                                                                        \
+          else                                                                                                     \
+          {                                                                                                        \
+            if (k_off != 0)                                                                                        \
+            {                                                                                                      \
+              kernels.kernel_nofix_acc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbm, realbn, realbk);    \
+            }                                                                                                      \
+            else                                                                                                   \
+            {                                                                                                      \
+              kernels.kernel_nofix_nonacc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbm, realbn, realbk); \
+            }                                                                                                      \
+          }                                                                                                        \
+        }                                                                                                          \
+      }                                                                                                            \
+    }                                                                                                              \
+  };                                                                                                               \
+  mmsize.thread_pool->ParallelFor(task_pool_param.size(), 1<<30, _worker);                                         \
+}                                                                                                                  \
 
-static void v1(const T *A, const T *B, T *C, const MatmulSize &mmsize, const SmallKernels &kernels)
-{
-  for (int kg = 0; kg < mmsize.kgroups; ++kg)
-  {
-#pragma omp parallel for collapse(4)
-    for (int ig = 0; ig < mmsize.mgroups; ++ig)
-      for (int jg = 0; jg < mmsize.ngroups; ++jg)
-        for (int i = 0; i < mmsize.mblocks_per_group; ++i)
-          for (int j = 0; j < mmsize.nblocks_per_group; ++j)
-          {
-            for (int k = 0; k < mmsize.kblocks_per_group; ++k)
-            {
 
-              { // core calculate
-                int i_off = (ig * mmsize.mblocks_per_group + i) * mmsize.bm;
-                int j_off = (jg * mmsize.nblocks_per_group + j) * mmsize.bn;
-                int k_off = (kg * mmsize.kblocks_per_group + k) * mmsize.bk;
-                if (i_off < mmsize.m && j_off < mmsize.n && k_off < mmsize.k)
-                {
-                  int realbm = mmsize.m - i_off >= mmsize.bm ? mmsize.bm : (mmsize.m - i_off);
-                  int realbn = mmsize.n - j_off >= mmsize.bn ? mmsize.bn : (mmsize.n - j_off);
-                  int realbk = mmsize.k - k_off >= mmsize.bk ? mmsize.bk : (mmsize.k - k_off);
-                  const T *pa = &A[i_off * mmsize.lda + k_off];
-                  const T *pb = &B[k_off * mmsize.ldb + j_off];
-                  T *pc = &C[i_off * mmsize.ldc + j_off];
-                  //printf("\trealbm,realbn,realbk=%d,%d,%d, ijk_off=%d,%d,%d\n", realbm, realbn, realbk, i_off, j_off, k_off);
-                  if (realbm == mmsize.bm)
-                  {
-                    if (realbn == mmsize.bn)
-                    {
-                      if (k_off != 0)
-                      {
-                        kernels.kernel_fixmn_acc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbk);
-                      }
-                      else
-                      {
-                        kernels.kernel_fixmn_nonacc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbk);
-                      }
-                    }
-                    else
-                    {
-                      if (k_off != 0)
-                      {
-                        kernels.kernel_fixm_acc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbn, realbk);
-                      }
-                      else
-                      {
-                        kernels.kernel_fixm_nonacc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbn, realbk);
-                      }
-                    }
-                  }
-                  else
-                  {
-                    if (realbn == mmsize.bn)
-                    {
-                      if (k_off != 0)
-                      {
-                        kernels.kernel_fixn_acc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbm, realbk);
-                      }
-                      else
-                      {
-                        kernels.kernel_fixn_nonacc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbm, realbk);
-                      }
-                    }
-                    else
-                    {
-                      if (k_off != 0)
-                      {
-                        kernels.kernel_nofix_acc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbm, realbn, realbk);
-                      }
-                      else
-                      {
-                        kernels.kernel_nofix_nonacc(pa, pb, pc, mmsize.lda, mmsize.ldb, mmsize.ldc, realbm, realbn, realbk);
-                      }
-                    }
-                  }
-                }
-              } // core calculate end
+   FUNC_DEF_HEAD(v1) LOOP1 LOOP2 LOOP3 LOOP4 LOOP5 LOOPE FUNC_DEF_TAIL
+   FUNC_DEF_HEAD(v2) LOOP1 LOOP2 LOOP4 LOOP3 LOOP5 LOOPE FUNC_DEF_TAIL
+   FUNC_DEF_HEAD(v3) LOOP1 LOOP3 LOOP2 LOOP4 LOOP5 LOOPE FUNC_DEF_TAIL
+   FUNC_DEF_HEAD(v4) LOOP1 LOOP3 LOOP4 LOOP2 LOOP5 LOOPE FUNC_DEF_TAIL
+   FUNC_DEF_HEAD(v5) LOOP1 LOOP4 LOOP2 LOOP3 LOOP5 LOOPE FUNC_DEF_TAIL
+   FUNC_DEF_HEAD(v6) LOOP1 LOOP4 LOOP3 LOOP2 LOOP5 LOOPE FUNC_DEF_TAIL
+   FUNC_DEF_HEAD(v7) LOOP2 LOOP1 LOOP3 LOOP4 LOOP5 LOOPE FUNC_DEF_TAIL
+   FUNC_DEF_HEAD(v8) LOOP2 LOOP1 LOOP4 LOOP3 LOOP5 LOOPE FUNC_DEF_TAIL
+   FUNC_DEF_HEAD(v9) LOOP2 LOOP3 LOOP1 LOOP4 LOOP5 LOOPE FUNC_DEF_TAIL
+  FUNC_DEF_HEAD(v10) LOOP2 LOOP3 LOOP4 LOOP1 LOOP5 LOOPE FUNC_DEF_TAIL
+  FUNC_DEF_HEAD(v11) LOOP2 LOOP4 LOOP1 LOOP3 LOOP5 LOOPE FUNC_DEF_TAIL
+  FUNC_DEF_HEAD(v12) LOOP2 LOOP4 LOOP3 LOOP1 LOOP5 LOOPE FUNC_DEF_TAIL
+  FUNC_DEF_HEAD(v13) LOOP3 LOOP1 LOOP2 LOOP4 LOOP5 LOOPE FUNC_DEF_TAIL
+  FUNC_DEF_HEAD(v14) LOOP3 LOOP1 LOOP4 LOOP2 LOOP5 LOOPE FUNC_DEF_TAIL
+  FUNC_DEF_HEAD(v15) LOOP3 LOOP2 LOOP1 LOOP4 LOOP5 LOOPE FUNC_DEF_TAIL
+  FUNC_DEF_HEAD(v16) LOOP3 LOOP2 LOOP4 LOOP1 LOOP5 LOOPE FUNC_DEF_TAIL
+  FUNC_DEF_HEAD(v17) LOOP3 LOOP4 LOOP1 LOOP2 LOOP5 LOOPE FUNC_DEF_TAIL
+  FUNC_DEF_HEAD(v18) LOOP3 LOOP4 LOOP2 LOOP1 LOOP5 LOOPE FUNC_DEF_TAIL
+  FUNC_DEF_HEAD(v19) LOOP4 LOOP1 LOOP2 LOOP3 LOOP5 LOOPE FUNC_DEF_TAIL
+  FUNC_DEF_HEAD(v20) LOOP4 LOOP1 LOOP3 LOOP2 LOOP5 LOOPE FUNC_DEF_TAIL
+  FUNC_DEF_HEAD(v21) LOOP4 LOOP2 LOOP1 LOOP3 LOOP5 LOOPE FUNC_DEF_TAIL
+  FUNC_DEF_HEAD(v22) LOOP4 LOOP2 LOOP3 LOOP1 LOOP5 LOOPE FUNC_DEF_TAIL
+  FUNC_DEF_HEAD(v23) LOOP4 LOOP3 LOOP1 LOOP2 LOOP5 LOOPE FUNC_DEF_TAIL
+  FUNC_DEF_HEAD(v24) LOOP4 LOOP3 LOOP2 LOOP1 LOOP5 LOOPE FUNC_DEF_TAIL
+FUNC_DEF_HEAD2(v100) LOOP1 LOOP2 LOOP3 LOOP4 LOOP5 LOOPE FUNC_DEF_TAIL
+FUNC_DEF_HEAD2(v101) LOOP1 LOOP2 LOOP3 LOOP5 LOOP4 LOOPE FUNC_DEF_TAIL
+FUNC_DEF_HEAD2(v102) LOOP1 LOOP2 LOOP4 LOOP3 LOOP5 LOOPE FUNC_DEF_TAIL
+FUNC_DEF_HEAD2(v103) LOOP1 LOOP2 LOOP4 LOOP5 LOOP3 LOOPE FUNC_DEF_TAIL
+FUNC_DEF_HEAD2(v104) LOOP1 LOOP2 LOOP5 LOOP3 LOOP4 LOOPE FUNC_DEF_TAIL
+FUNC_DEF_HEAD2(v105) LOOP1 LOOP2 LOOP5 LOOP4 LOOP3 LOOPE FUNC_DEF_TAIL
+FUNC_DEF_HEAD2(v106) LOOP2 LOOP1 LOOP3 LOOP4 LOOP5 LOOPE FUNC_DEF_TAIL
+FUNC_DEF_HEAD2(v107) LOOP2 LOOP1 LOOP3 LOOP5 LOOP4 LOOPE FUNC_DEF_TAIL
+FUNC_DEF_HEAD2(v108) LOOP2 LOOP1 LOOP4 LOOP3 LOOP5 LOOPE FUNC_DEF_TAIL
+FUNC_DEF_HEAD2(v109) LOOP2 LOOP1 LOOP4 LOOP5 LOOP3 LOOPE FUNC_DEF_TAIL
+FUNC_DEF_HEAD2(v110) LOOP2 LOOP1 LOOP5 LOOP3 LOOP4 LOOPE FUNC_DEF_TAIL
+FUNC_DEF_HEAD2(v111) LOOP2 LOOP1 LOOP5 LOOP4 LOOP3 LOOPE FUNC_DEF_TAIL
 
-            }
-          }
-  }
-}
 
-FUNC_DEF_HEAD(v1_invalid)
-LOOP1 LOOP2 LOOP3 LOOP4 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v2) LOOP1 LOOP2 LOOP4 LOOP3 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v3) LOOP1 LOOP3 LOOP2 LOOP4 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v4) LOOP1 LOOP3 LOOP4 LOOP2 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v5) LOOP1 LOOP4 LOOP2 LOOP3 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v6) LOOP1 LOOP4 LOOP3 LOOP2 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v7) LOOP2 LOOP1 LOOP3 LOOP4 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v8) LOOP2 LOOP1 LOOP4 LOOP3 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v9) LOOP2 LOOP3 LOOP1 LOOP4 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v10) LOOP2 LOOP3 LOOP4 LOOP1 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v11) LOOP2 LOOP4 LOOP1 LOOP3 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v12) LOOP2 LOOP4 LOOP3 LOOP1 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v13) LOOP3 LOOP1 LOOP2 LOOP4 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v14) LOOP3 LOOP1 LOOP4 LOOP2 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v15) LOOP3 LOOP2 LOOP1 LOOP4 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v16) LOOP3 LOOP2 LOOP4 LOOP1 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v17) LOOP3 LOOP4 LOOP1 LOOP2 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v18) LOOP3 LOOP4 LOOP2 LOOP1 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v19) LOOP4 LOOP1 LOOP2 LOOP3 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v20) LOOP4 LOOP1 LOOP3 LOOP2 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v21) LOOP4 LOOP2 LOOP1 LOOP3 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v22) LOOP4 LOOP2 LOOP3 LOOP1 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v23) LOOP4 LOOP3 LOOP1 LOOP2 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD(v24) LOOP4 LOOP3 LOOP2 LOOP1 LOOP5 FUNC_DEF_TAIL
-
-    FUNC_DEF_HEAD2(v100) LOOP1 LOOP2 LOOP3 LOOP4 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD2(v101) LOOP1 LOOP2 LOOP3 LOOP5 LOOP4 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD2(v102) LOOP1 LOOP2 LOOP4 LOOP3 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD2(v103) LOOP1 LOOP2 LOOP4 LOOP5 LOOP3 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD2(v104) LOOP1 LOOP2 LOOP5 LOOP3 LOOP4 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD2(v105) LOOP1 LOOP2 LOOP5 LOOP4 LOOP3 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD2(v106) LOOP2 LOOP1 LOOP3 LOOP4 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD2(v107) LOOP2 LOOP1 LOOP3 LOOP5 LOOP4 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD2(v108) LOOP2 LOOP1 LOOP4 LOOP3 LOOP5 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD2(v109) LOOP2 LOOP1 LOOP4 LOOP5 LOOP3 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD2(v110) LOOP2 LOOP1 LOOP5 LOOP3 LOOP4 FUNC_DEF_TAIL
-    FUNC_DEF_HEAD2(v111) LOOP2 LOOP1 LOOP5 LOOP4 LOOP3 FUNC_DEF_TAIL
-
-    struct MatmulImpl
+struct MatmulImpl
 {
   std::string name;
   INNER_MATMUL_FUNC impl;
@@ -387,6 +356,11 @@ public:
     auto proxy_handle = HostOSTProxyManager::Instance().CreateNewProxy(handle_name.c_str());
     name_2_handle_[handle_name] = proxy_handle;
     return proxy_handle;
+  }
+
+  void SetThreadPool(tensorflow::thread::ThreadPool* thread_pool){
+    mmconfig.mmsize.thread_pool = thread_pool;
+    _cpu_device = thread_pool;
   }
 
   void SetConditions(int iter_per_cycle = 0, int max_iters = 0){
@@ -1066,7 +1040,132 @@ private:
     }
   }
 
-  void update_kernels(SmallKernels &kernels, int bm, int bn);
+  void update_kernels(SmallKernels &kernels, int bm, int bn)
+  {
+    if (bm == 32)
+    {
+        SET_KERNELS_ENUM_BN(32)
+    }
+    else if (bm == 48)
+    {
+        SET_KERNELS_ENUM_BN(48)
+    }
+    else if (bm == 64)
+    {
+        SET_KERNELS_ENUM_BN(64)
+    }
+    else if (bm == 80)
+    {
+        SET_KERNELS_ENUM_BN(80)
+    }
+    else if (bm < 32)
+    {
+        switch (bm)
+        {
+        case 1:
+            SET_KERNELS_ENUM_BN(1);
+            break;
+        case 2:
+            SET_KERNELS_ENUM_BN(2);
+            break;
+        case 3:
+            SET_KERNELS_ENUM_BN(3);
+            break;
+        case 4:
+            SET_KERNELS_ENUM_BN(4);
+            break;
+        case 5:
+            SET_KERNELS_ENUM_BN(5);
+            break;
+        case 6:
+            SET_KERNELS_ENUM_BN(6);
+            break;
+        case 7:
+            SET_KERNELS_ENUM_BN(7);
+            break;
+        case 8:
+            SET_KERNELS_ENUM_BN(8);
+            break;
+        case 9:
+            SET_KERNELS_ENUM_BN(9);
+            break;
+        case 10:
+            SET_KERNELS_ENUM_BN(10);
+            break;
+        case 11:
+            SET_KERNELS_ENUM_BN(11);
+            break;
+        case 12:
+            SET_KERNELS_ENUM_BN(12);
+            break;
+        case 13:
+            SET_KERNELS_ENUM_BN(13);
+            break;
+        case 14:
+            SET_KERNELS_ENUM_BN(14);
+            break;
+        case 15:
+            SET_KERNELS_ENUM_BN(15);
+            break;
+        case 16:
+            SET_KERNELS_ENUM_BN(16);
+            break;
+        case 17:
+            SET_KERNELS_ENUM_BN(17);
+            break;
+        case 18:
+            SET_KERNELS_ENUM_BN(18);
+            break;
+        case 19:
+            SET_KERNELS_ENUM_BN(19);
+            break;
+        case 20:
+            SET_KERNELS_ENUM_BN(20);
+            break;
+        case 21:
+            SET_KERNELS_ENUM_BN(21);
+            break;
+        case 22:
+            SET_KERNELS_ENUM_BN(22);
+            break;
+        case 23:
+            SET_KERNELS_ENUM_BN(23);
+            break;
+        case 24:
+            SET_KERNELS_ENUM_BN(24);
+            break;
+        case 25:
+            SET_KERNELS_ENUM_BN(25);
+            break;
+        case 26:
+            SET_KERNELS_ENUM_BN(26);
+            break;
+        case 27:
+            SET_KERNELS_ENUM_BN(27);
+            break;
+        case 28:
+            SET_KERNELS_ENUM_BN(28);
+            break;
+        case 29:
+            SET_KERNELS_ENUM_BN(29);
+            break;
+        case 30:
+            SET_KERNELS_ENUM_BN(30);
+            break;
+        case 31:
+            SET_KERNELS_ENUM_BN(31);
+            break;
+        }
+    }
+    else
+    {
+        printf("Unsupported kernel for bm=%d\n", bm);
+        exit(-1);
+    }
+
+    kernels.kernel_nofix_acc = small_gemm_nofix<true>;
+    kernels.kernel_nofix_nonacc = small_gemm_nofix<false>;
+  }
 
   PerfStat benchmark(INNER_MATMUL_FUNC func, const MatmulSize &mmsize,
                      const SmallKernels &kernels,
@@ -1145,6 +1244,7 @@ private:
   int total_cycle_ = 0;
   int max_cycle_ = 0;
   static const MatmulImpl impl_list[];
+  tensorflow::thread::ThreadPool* _cpu_device;
 };
 
 #endif

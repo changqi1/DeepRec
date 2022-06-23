@@ -4197,13 +4197,14 @@ tf_kernel_library(
     srcs = glob([
         "tuning_ops/*.cc",
     ]),
+    hdrs = ["mkl_matmul_ops_common.h"],
     copts = ["-fexceptions", "-march=skylake-avx512"],
     nocopts = "-fno-exceptions",
     includes = [
         "tuning_ops/include",
         "tuning_ops/host_proxy",
     ],
-    deps = ["//third_party/eigen3", ":host_proxy"] + DYNAMIC_DEPS + mkl_deps(),
+    deps = [":host_proxy"] + MATH_DEPS + mkl_deps(),
 )
 
 tf_kernel_library(
