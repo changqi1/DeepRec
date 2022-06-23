@@ -15,6 +15,10 @@ limitations under the License.
 
 #define EIGEN_USE_THREADS
 
+#include "dnnl.hpp"
+#include "tensorflow/core/kernels/fill_functor.h"
+#include "tensorflow/core/kernels/mkl_matmul_ops_common.h"
+
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
@@ -28,6 +32,46 @@ limitations under the License.
 #include "tunable_matmul.h"
 
 #define TUNED_CONFIG_FILE "./tuned"
+
+const MatmulImpl TunableMatmul::impl_list[] = {
+    {"v1", v1},
+    {"v2", v2},
+    {"v3", v3},
+    {"v4", v4},
+    {"v5", v5},
+    {"v6", v6},
+    {"v7", v7},
+    {"v8", v8},
+    {"v9", v9},
+    {"v10", v10},
+    {"v11", v11},
+    {"v12", v12},
+    {"v13", v13},
+    {"v14", v14},
+    {"v15", v15},
+    {"v16", v16},
+    {"v17", v17},
+    {"v18", v18},
+    {"v19", v19},
+    {"v20", v20},
+    {"v21", v21},
+    {"v22", v22},
+    {"v23", v23},
+    {"v24", v24},
+    {"v100", v100},
+    {"v101", v101},
+    {"v102", v102},
+    {"v103", v103},
+    {"v104", v104},
+    {"v105", v105},
+    {"v106", v106},
+    {"v107", v107},
+    {"v108", v108},
+    {"v109", v109},
+    {"v110", v110},
+    {"v111", v111},
+    {"", nullptr},
+};
 
 namespace tensorflow {
 
@@ -59,6 +103,8 @@ class TuningMatMulOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* ctx) override {
+    tmm_->SetThreadPool(ctx->device()->tensorflow_cpu_worker_threads()->workers);
+
     const Tensor& a = ctx->input(0);
     const Tensor& b = ctx->input(1);
 
@@ -108,8 +154,13 @@ class TuningMatMulOp : public OpKernel {
     auto b_ptr = (b.template flat<T>().data());
     auto c_ptr = (out->template flat<T>().data());
 
-    TuningGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
-                transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
+    if(m < 64 || k < 64 || n < 64){
+      MklBlasGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
+                  transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
+    } else {
+      TuningGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
+                  transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
+    }
   }
 
  private:
@@ -145,6 +196,97 @@ class TuningMatMulOp : public OpKernel {
     }
     // printf("Host Compute Time: %f ms\n", t_.getTime());
   }
+
+
+
+
+  // --------------------------------------------------------------------------
+  //
+  // @brief Matrix-Matrix Multiplication with FP32 tensors, a, b, c using CBLAS
+  // interface. c = op(a) * op(b)
+  //
+  // @param transa  Specifies the form of op(a) used in MatMul. If transa is
+  // true, then op(a) = a^T, otherwise op(a) = a
+  //
+  // @param transb  Specifies the form of op(b) used in MatMul. If transb is
+  // true, then op(b) = b^T, otherwise op(b) = b
+  //
+  // @param m       Specifies the number of rows of the matrix op(a) and of the
+  // matrix c. The value of m must be at least zero.
+  //
+  // @param n       Specifies the number of columns of the matrix op(b) and the
+  // number of columns of the matrix c. The value of n must be at least zero.
+  //
+  // @param k       Specifies the number of columns of the matrix op(a) and the
+  // number of rows of the matrix op(b)
+  //
+  // @param a       Address of matrix a
+  //
+  // @param lda     Leading dimension of 'a' matrix. This is set at calling site
+  // depending on transa parameter. Since TF uses row-major
+  // layout, leading dimension is the stride between consecutive rows
+  // lda = max(1,k) when transa is false, otherwise lda = max(1,m)
+  //
+  // @param b       Address of matrix b
+  //
+  // @param ldb     Leading dimension of 'b' matrix. This is set at calling site
+  // depending on transb parameter. Since TF uses row-major
+  // layout, leading dimension is the stride between consecutive rows
+  // ldb = max(1,n) when transb is false, otherwise ldb = max(1,k)
+  //
+  // @param c       Address of matrix c
+  //
+  // @param ldc     Leading dimension of 'c' matrix. Since TF uses row-major
+  // layout, leading dimension is the stride between consecutive rows, max(1,n)
+  //
+  // --------------------------------------------------------------------------
+  void MklBlasGemm(OpKernelContext* ctx, bool transa, bool transb, const int m,
+                   const int n, const int k, const float* a, const int lda,
+                   const float* b, const int ldb, float* c, const int ldc) {
+    // BLAS GEMM API defines Matrix Multiplication as c = alpha * op(a) * op(b)
+    // + beta * c.
+    // Since TF MatMul does not have parameters for alpha, beta, we set them to
+    // 1.0 and 0.0 respectively.
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+    char char_transa = transa ? 'T' : 'N';
+    char char_transb = transb ? 'T' : 'N';
+    VLOG(2) << "MKL DNN SGEMM called";
+#ifdef ENABLE_DNNL_THREADPOOL
+    // With threadpool , the runtime overhead is comparable to the kernel
+    // execution for small kernel sizes. For such sizes, it may be better to run
+    // the kernel single threaded. Here we are coming up with a cost model based
+    // on L1 sizes. If we find that matrices are small enough, we will execute
+    // single threaded. This may need tuning.
+    if (ExecuteSingleThreadedGemm(m, n, k)) {
+      // For now, call single-threaded gemm.
+      MklDnnThreadPool eigen_tp(ctx, 1);
+      sgemm(char_transa, char_transb, m, n, k, alpha, a, lda, b, ldb,
+                    beta, c, ldc, &eigen_tp);
+    } else {
+      MklDnnThreadPool eigen_tp(ctx);
+      sgemm(char_transa, char_transb, m, n, k, alpha, a, lda, b, ldb,
+                    beta, c, ldc, &eigen_tp);
+    }
+#else
+    dnnl_sgemm(char_transa, char_transb, m, n, k, alpha, a, lda, b, ldb, beta,
+               c, ldc);
+#endif  // ENABLE_DNNL_THREADPOOL
+  }
+
+  void MklBlasGemm(OpKernelContext* ctx, bool transa, bool transb, const int m,
+                   const int n, const int k, const bfloat16* a, const int lda,
+                   const bfloat16* b, const int ldb, bfloat16* c,
+                   const int ldc) {
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+    const int index_transa = transa ? 1 : 0;
+    const int index_transb = transb ? 1 : 0;
+    const char ftrans[] = {'N', 'T', 'C'};
+    dnnl_gemm<bfloat16>(ftrans[index_transa], ftrans[index_transb], m, n, k,
+                        alpha, a, lda, b, ldb, beta, c, ldc, ctx);
+  }
+
 };
 
 // template <typename Device, typename T>

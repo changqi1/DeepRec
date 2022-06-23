@@ -217,7 +217,7 @@ void HostProxy::Tune() {
         Regist();
     }
 
-    std::cout << "Start tune!" << std::endl;
+    // std::cout << "Start tune!" << std::endl;
     std::map<std::string, int> tmpParams;
     float tmpFitness = -std::numeric_limits<float>::max();
     while (!tuneOneIteration((ParamOptimizerIF *)mOptimizerIF, (Suite *)mSuiteBase,
@@ -250,7 +250,7 @@ void HostProxy::Tune() {
               (Map_StringToString)mBestParamsMapStringToString, (Suite *)mSuiteBase);
     std::lock_guard<std::mutex> lk(mMutex);
     mState = State::STOPPED;
-    std::cout << "Tune over" << std::endl;
+    // std::cout << "Tune over" << std::endl;
 }
 
 bool HostProxy::Start() {
@@ -276,7 +276,7 @@ bool HostProxy::Start() {
 
 bool HostProxy::Stop() {
     if (mState == State::STOPPED) {
-        std::cout << "Tune has over" << std::endl;
+        // std::cout << "Tune has over" << std::endl;
         return true;
     }
     mStopRequest = true;
