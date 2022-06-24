@@ -83,13 +83,15 @@ static Graph* Matmul(const string& kind, int m, int k, int n, bool transpose_a, 
 #define BM_Matmul_NTH(M, K, N, TA, TB, T, DEVICE) \
   BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 1);  \
   BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 4);  \
-  BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 32);  \
-  // BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 8);  \
+  BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 8);  \
 
 #define BM_Matmul(M, K, N, TA, TB)               \
   BM_Matmul_NTH(M, K, N, TA, TB, float, cpu);    \
   // BM_Matmul_NTH(M, K, N, TA, TB, bfloat16, cpu); \
 
+
+BM_Matmul(51200, 128, 128, false, false);
+// BM_Matmul(16, 16, 16, false, false);
 /*
 // Batch size of 1 included for inference.
 // Typical fully connected layers
@@ -169,8 +171,6 @@ BM_Matmul(2000, 1, 2000, true, true);
 // Vector * Vector
 // BM_Matmul(1, 50, 1, false, false);
 // BM_Matmul(1, 2000, 1, false, false);
-BM_Matmul(51200, 128, 128, false, false);
-BM_Matmul(16, 16, 16, false, false);
 // BM_Matmul(1024, 1024, 1024, false, false);
 
 // BM_Matmul(50, 1, 50, false, false);
