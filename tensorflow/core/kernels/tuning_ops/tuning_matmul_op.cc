@@ -103,6 +103,8 @@ class TuningMatMulOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* ctx) override {
+    auto start = std::chrono::high_resolution_clock::now();
+    ShowLog(start, "start Computing");
     tmm_->SetThreadPool(ctx->device()->tensorflow_cpu_worker_threads()->workers);
 
     const Tensor& a = ctx->input(0);
@@ -161,6 +163,7 @@ class TuningMatMulOp : public OpKernel {
       TuningGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
                   transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
     }
+    ShowLog(start, "// tuning matmul time using.");
   }
 
  private:

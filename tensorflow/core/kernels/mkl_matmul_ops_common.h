@@ -35,6 +35,13 @@ using dnnl::stream;
 
 namespace tensorflow {
 
+template <typename T>
+void ShowLog(const std::chrono::time_point<T>& start, const std::string& msg = "") {
+  auto end = std::chrono::high_resolution_clock::now();
+  VLOG(1) << ">>>" << " time= "
+            << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " us; message=" << msg;
+}
+
 #define L1_SIZE 32 * 1024
 typedef Eigen::ThreadPoolDevice CPUDevice;
 
