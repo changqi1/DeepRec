@@ -58,22 +58,32 @@ const MatmulImpl TunableMatmul::impl_list[] = {
     {"v22", v22},
     {"v23", v23},
     {"v24", v24},
-    {"v100", v100},
-    {"v101", v101},
-    {"v102", v102},
-    {"v103", v103},
-    {"v104", v104},
-    {"v105", v105},
-    {"v106", v106},
-    {"v107", v107},
-    {"v108", v108},
-    {"v109", v109},
-    {"v110", v110},
-    {"v111", v111},
+    // {"v100", v100},
+    // {"v101", v101},
+    // {"v102", v102},
+    // {"v103", v103},
+    // {"v104", v104},
+    // {"v105", v105},
+    // {"v106", v106},
+    // {"v107", v107},
+    // {"v108", v108},
+    // {"v109", v109},
+    // {"v110", v110},
+    // {"v111", v111},
     {"", nullptr},
 };
 
+void ShowLog(const std::string& msg = "") {
+  static auto _begin = std::chrono::high_resolution_clock::now();
+  auto _now = std::chrono::high_resolution_clock::now();
+  VLOG(1) << ">>>" << " time= "
+            << std::chrono::duration_cast<std::chrono::microseconds>(_now - _begin).count() << " us; message=" << msg;
+  _begin = _now;
+}
+
 namespace tensorflow {
+
+
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 
@@ -103,9 +113,9 @@ class TuningMatMulOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* ctx) override {
-    auto start = std::chrono::high_resolution_clock::now();
-    ShowLog(start, "start Computing");
-    tmm_->SetThreadPool(ctx->device()->tensorflow_cpu_worker_threads()->workers);
+    ShowLog("start Computing");
+    // tmm_->SetThreadPool(ctx->device()->tensorflow_cpu_worker_threads()->workers);
+    tmm_->SetThreadPool(&ctx->template eigen_device<Device>());
 
     const Tensor& a = ctx->input(0);
     const Tensor& b = ctx->input(1);
@@ -156,14 +166,14 @@ class TuningMatMulOp : public OpKernel {
     auto b_ptr = (b.template flat<T>().data());
     auto c_ptr = (out->template flat<T>().data());
 
-    if(m < 64 || k < 64 || n < 64){
+    if(false && (m < 64 || k < 64 || n < 64)){
       MklBlasGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
                   transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
     } else {
       TuningGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
                   transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
     }
-    ShowLog(start, "// tuning matmul time using.");
+    ShowLog("// end of tuning matmul time using.");
   }
 
  private:
@@ -185,7 +195,9 @@ class TuningMatMulOp : public OpKernel {
     // bool flush_b = false;
     if (tune_) {
       if(host_) {
+        ShowLog("// start of TuningGemm");
         tmm_->host_tune(false, a, b, c);
+        ShowLog("// end of TuningGemm");
       } else {
         tmm_->tune(false, a, b, c);
       }
