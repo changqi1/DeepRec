@@ -35,6 +35,14 @@ limitations under the License.
 
 namespace tensorflow {
 
+void ShowLog(const std::string& msg = "") {
+  static auto _begin = std::chrono::high_resolution_clock::now();
+  auto _now = std::chrono::high_resolution_clock::now();
+  VLOG(1) << ">>>" << " time= "
+            << std::chrono::duration_cast<std::chrono::microseconds>(_now - _begin).count() << " us; message=" << msg;
+  _begin = _now;
+}
+
 typedef Eigen::ThreadPoolDevice CPUDevice;
 
 template <typename Device, typename T, bool USE_CUBLAS>
@@ -46,8 +54,7 @@ class MklMatMulOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* ctx) override {
-    auto start = std::chrono::high_resolution_clock::now();
-    ShowLog(start, "start Computing");
+    ShowLog("start Computing");
 
     const Tensor& a = ctx->input(0);
     const Tensor& b = ctx->input(1);
@@ -100,7 +107,7 @@ class MklMatMulOp : public OpKernel {
 
     MklBlasGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
                 transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
-    ShowLog(start, "// mkl matmul time using.");
+    ShowLog("// end of mkl matmul time using.");
   }
 
  private:
