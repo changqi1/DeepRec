@@ -84,13 +84,14 @@ static Graph* Matmul(const string& kind, int m, int k, int n, bool transpose_a, 
   BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 1);  \
   BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 4);  \
   BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 8);  \
+  BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 16); \
 
 #define BM_Matmul(M, K, N, TA, TB)                  \
   BM_Matmul_NTH(M, K, N, TA, TB, float, cpu);       \
   // BM_Matmul_NTH(M, K, N, TA, TB, bfloat16, cpu); \
 
 
-//BM_Matmul(51200, 128, 128, false, false);
+// BM_Matmul(51200, 128, 128, false, false);
 BM_Matmul(5, 8192, 4096, false, false);
 // BM_Matmul(16, 16, 16, false, false);
 /*

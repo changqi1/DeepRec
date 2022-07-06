@@ -166,6 +166,7 @@ struct MatmulConfig
 #define LOOP5 for (int k = 0; k < mmsize.kblocks_per_group; ++k)
 
 #define LOOPE { task_pool_param.push_back(std::make_tuple(ig, jg, i, j)); }
+#define LOOPE2 { task_pool_param.push_back(std::make_tuple(ig, jg)); }
 
 // Equals to: #pragma omp parallel for collapse(4)
 #define PARALLEL_C4 _Pragma("omp parallel for collapse(4)")
@@ -174,13 +175,15 @@ struct MatmulConfig
 #define FUNC_DEF_HEAD(name)                                                                             \
   static void name(const T *A, const T *B, T *C, const MatmulSize &mmsize, const SmallKernels &kernels) \
   {                                                                                                     \
-    std::vector<std::tuple<int, int, int, int>> task_pool_param(                                        \
+    std::vector<std::tuple<int, int, int, int>> task_pool_param;                                        \
+    task_pool_param.reserve(                                                                            \
       mmsize.mgroups * mmsize.ngroups * mmsize.mblocks_per_group * mmsize.nblocks_per_group);           \
 
 #define FUNC_DEF_HEAD2(name)                                                                            \
   static void name(const T *A, const T *B, T *C, const MatmulSize &mmsize, const SmallKernels &kernels) \
   {                                                                                                     \
-    std::vector<std::tuple<int, int>> task_pool_param(mmsize.mgroups * mmsize.ngroups);                 \
+    std::vector<std::tuple<int, int>> task_pool_param;                                                  \
+    task_pool_param.reserve(mmsize.mgroups * mmsize.ngroups);                                           \
 
 
 #define FUNC_CORE_CAL                                                                                            \
@@ -266,6 +269,24 @@ struct MatmulConfig
   }                                                                         \
 }                                                                           \
 
+#define FUNC_DEF_MID2                                                       \
+  int kg = 0;                                                               \
+  auto _worker = [&](int64_t begin, int64_t end) -> void {                  \
+    int ig, jg;                                                             \
+    for(int index=begin; index < end; index++){                             \
+      std::tie(ig, jg) = task_pool_param[index];                            \
+
+
+#define FUNC_DEF_TAIL2                                                      \
+        FUNC_CORE_CAL                                                       \
+    }                                                                       \
+  };                                                                        \
+  auto cost = Eigen::TensorOpCost(4*128*128*2, 4*128*128*2, 128*128*2);     \
+  for (; kg < mmsize.kgroups; ++kg){                                        \
+    mmsize.thread_pool->parallelFor(task_pool_param.size(), cost, _worker); \
+  }                                                                         \
+}                                                                           \
+
 
    FUNC_DEF_HEAD(v1) LOOP1 LOOP2 LOOP3 LOOP4 LOOPE FUNC_DEF_TAIL
    FUNC_DEF_HEAD(v2) LOOP1 LOOP2 LOOP4 LOOP3 LOOPE FUNC_DEF_TAIL
@@ -291,18 +312,18 @@ struct MatmulConfig
   FUNC_DEF_HEAD(v22) LOOP4 LOOP2 LOOP3 LOOP1 LOOPE FUNC_DEF_TAIL
   FUNC_DEF_HEAD(v23) LOOP4 LOOP3 LOOP1 LOOP2 LOOPE FUNC_DEF_TAIL
   FUNC_DEF_HEAD(v24) LOOP4 LOOP3 LOOP2 LOOP1 LOOPE FUNC_DEF_TAIL
-// FUNC_DEF_HEAD2(v100) LOOP1 LOOP2 LOOP3 LOOP4 LOOP5 LOOPE FUNC_DEF_TAIL2
-// FUNC_DEF_HEAD2(v101) LOOP1 LOOP2 LOOP3 LOOP5 LOOP4 LOOPE FUNC_DEF_TAIL2
-// FUNC_DEF_HEAD2(v102) LOOP1 LOOP2 LOOP4 LOOP3 LOOP5 LOOPE FUNC_DEF_TAIL2
-// FUNC_DEF_HEAD2(v103) LOOP1 LOOP2 LOOP4 LOOP5 LOOP3 LOOPE FUNC_DEF_TAIL2
-// FUNC_DEF_HEAD2(v104) LOOP1 LOOP2 LOOP5 LOOP3 LOOP4 LOOPE FUNC_DEF_TAIL2
-// FUNC_DEF_HEAD2(v105) LOOP1 LOOP2 LOOP5 LOOP4 LOOP3 LOOPE FUNC_DEF_TAIL2
-// FUNC_DEF_HEAD2(v106) LOOP2 LOOP1 LOOP3 LOOP4 LOOP5 LOOPE FUNC_DEF_TAIL2
-// FUNC_DEF_HEAD2(v107) LOOP2 LOOP1 LOOP3 LOOP5 LOOP4 LOOPE FUNC_DEF_TAIL2
-// FUNC_DEF_HEAD2(v108) LOOP2 LOOP1 LOOP4 LOOP3 LOOP5 LOOPE FUNC_DEF_TAIL2
-// FUNC_DEF_HEAD2(v109) LOOP2 LOOP1 LOOP4 LOOP5 LOOP3 LOOPE FUNC_DEF_TAIL2
-// FUNC_DEF_HEAD2(v110) LOOP2 LOOP1 LOOP5 LOOP3 LOOP4 LOOPE FUNC_DEF_TAIL2
-// FUNC_DEF_HEAD2(v111) LOOP2 LOOP1 LOOP5 LOOP4 LOOP3 LOOPE FUNC_DEF_TAIL2
+FUNC_DEF_HEAD2(v100) LOOP1 LOOP2 LOOPE2 FUNC_DEF_MID2 LOOP3 LOOP4 LOOP5 FUNC_DEF_TAIL2
+FUNC_DEF_HEAD2(v101) LOOP1 LOOP2 LOOPE2 FUNC_DEF_MID2 LOOP3 LOOP5 LOOP4 FUNC_DEF_TAIL2
+FUNC_DEF_HEAD2(v102) LOOP1 LOOP2 LOOPE2 FUNC_DEF_MID2 LOOP4 LOOP3 LOOP5 FUNC_DEF_TAIL2
+FUNC_DEF_HEAD2(v103) LOOP1 LOOP2 LOOPE2 FUNC_DEF_MID2 LOOP4 LOOP5 LOOP3 FUNC_DEF_TAIL2
+FUNC_DEF_HEAD2(v104) LOOP1 LOOP2 LOOPE2 FUNC_DEF_MID2 LOOP5 LOOP3 LOOP4 FUNC_DEF_TAIL2
+FUNC_DEF_HEAD2(v105) LOOP1 LOOP2 LOOPE2 FUNC_DEF_MID2 LOOP5 LOOP4 LOOP3 FUNC_DEF_TAIL2
+FUNC_DEF_HEAD2(v106) LOOP2 LOOP1 LOOPE2 FUNC_DEF_MID2 LOOP3 LOOP4 LOOP5 FUNC_DEF_TAIL2
+FUNC_DEF_HEAD2(v107) LOOP2 LOOP1 LOOPE2 FUNC_DEF_MID2 LOOP3 LOOP5 LOOP4 FUNC_DEF_TAIL2
+FUNC_DEF_HEAD2(v108) LOOP2 LOOP1 LOOPE2 FUNC_DEF_MID2 LOOP4 LOOP3 LOOP5 FUNC_DEF_TAIL2
+FUNC_DEF_HEAD2(v109) LOOP2 LOOP1 LOOPE2 FUNC_DEF_MID2 LOOP4 LOOP5 LOOP3 FUNC_DEF_TAIL2
+FUNC_DEF_HEAD2(v110) LOOP2 LOOP1 LOOPE2 FUNC_DEF_MID2 LOOP5 LOOP3 LOOP4 FUNC_DEF_TAIL2
+FUNC_DEF_HEAD2(v111) LOOP2 LOOP1 LOOPE2 FUNC_DEF_MID2 LOOP5 LOOP4 LOOP3 FUNC_DEF_TAIL2
 
 
 struct MatmulImpl
