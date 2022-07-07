@@ -93,6 +93,23 @@ static Graph* Matmul(const string& kind, int m, int k, int n, bool transpose_a, 
 
 // BM_Matmul(51200, 128, 128, false, false);
 BM_Matmul(5, 8192, 4096, false, false);
+BM_Matmul(1024, 696, 64, false, false);
+BM_Matmul(1024, 184, 256, false, false);
+BM_Matmul(1024, 184, 64, false, false);
+
+BM_Matmul(204800, 200, 64, false, false);
+BM_Matmul(71680, 420, 64, false, false);
+BM_Matmul(51200, 356, 256, false, false);
+BM_Matmul(51200, 232, 64, false, false);
+BM_Matmul(20480, 260, 64, false, false);
+BM_Matmul(5120, 210, 64, false, false);
+
+BM_Matmul(204800, 200, 128, false, false);
+BM_Matmul(71680, 420, 128, false, false);
+BM_Matmul(51200, 356, 512, false, false);
+BM_Matmul(51200, 232, 128, false, false);
+BM_Matmul(20480, 260, 128, false, false);
+BM_Matmul(5120, 210, 128, false, false);
 // BM_Matmul(16, 16, 16, false, false);
 /*
 // Batch size of 1 included for inference.
