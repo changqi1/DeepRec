@@ -166,7 +166,7 @@ class TuningMatMulOp : public OpKernel {
     auto b_ptr = (b.template flat<T>().data());
     auto c_ptr = (out->template flat<T>().data());
 
-    if(false && (m < 64 || k < 64 || n < 64)){
+    if(m < 64 || k < 64 || n < 64){
       MklBlasGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
                   transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
     } else {
