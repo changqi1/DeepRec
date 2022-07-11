@@ -169,8 +169,11 @@ class TuningMatMulOp : public OpKernel {
     if(m < 64 || k < 64 || n < 64){
       MklBlasGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
                   transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
-    } else {
+    } else if(tune_){
       TuningGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
+                  transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
+    } else {
+      MklBlasGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
                   transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
     }
     ShowLog("// end of tuning matmul time using.");
