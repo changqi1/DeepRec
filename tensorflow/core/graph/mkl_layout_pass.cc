@@ -847,7 +847,7 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
       "_FusedBatchMatMul", "_FusedBatchMatMulV2", //"_FusedMatMul", 
       "Identity", "LeakyRelu", "LeakyReluGrad", "MatMul",
       "Relu", "ReluGrad", "Relu6", "Relu6Grad", "Gelu", "GeluGrad",
-      "Tanh", "TanhGrad", "Reshape"
+      "Tanh", "TanhGrad" //, "Reshape"
     };
     // Enable "TF_MKL_PRIMITIVE_ONLY_FOR_RECO" by default
     // TF_MKL_PRIMITIVE_ONLY_FOR_RECO=true and reco_ops -> oneDNN replaces eigen ops
