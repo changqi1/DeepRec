@@ -28,7 +28,185 @@ limitations under the License.
 #include "tensorflow/core/public/session.h"
 #include "tensorflow/core/util/mkl_util.h"
 
+#include "tensorflow/core/framework/fake_input.h"
+
+#define printTensor(T, d) \
+    std::cout<< (T).tensor<float, (d)>() << std::endl
+
+#define printTensorUInt8(T, d) \
+    std::cout<< (T).tensor<uint8, (d)>() << std::endl
+
 namespace tensorflow {
+
+//----------------------------------------------------------------------------//
+// MatMul Unit Tests are below.                                               //
+//----------------------------------------------------------------------------//
+
+// Helper class for converting MKL tensors to TF tensors and comparing to
+// expected values
+static const uint8 dummy_tensor[] = {0, 0, 0, 0, 0, 0, 0, 0};
+static const TensorShape dummy_shape({8});
+
+using GraphRunner =
+    std::function<void(const Tensor& input_data, const Tensor& filter_data, Tensor* out, bool transpose_a, bool transpose_b)>;
+
+template <typename T>
+class CommonTestUtilities : public OpsTestBase {
+ public:
+  void PerformConversion(DataType dtype, const Tensor& tensor, Tensor* output) { // Default, convert shape
+    TF_EXPECT_OK(InitOp());
+    AddInputFromArray<T>(tensor.shape(), tensor.flat<T>());
+    TF_ASSERT_OK(RunOpKernel());
+
+    *output = *GetOutput(0);
+  }
+
+  // Runs a Tensorflow graph defined by the root scope, and fetches the result
+  // of 'fetch' node into the output Tensor.
+  static void RunAndFetch(const tensorflow::Scope& root, const string& fetch,
+                          Tensor* output) {
+    tensorflow::GraphDef graph;
+    TF_ASSERT_OK(root.ToGraphDef(&graph));
+
+    std::unique_ptr<tensorflow::Session> session(
+        tensorflow::NewSession(tensorflow::SessionOptions()));
+    TF_ASSERT_OK(session->Create(graph));
+
+    std::vector<Tensor> unfused_tensors;
+    TF_ASSERT_OK(session->Run({}, {fetch}, {}, &unfused_tensors));
+
+    *output = unfused_tensors[0];
+  }
+
+  void TestBody() {}
+
+  // Compare two outcomes default & mkl by calling run_default() & run_mkl()
+  static void VerifyMKLMatrixClose(int m, int k, int n,
+                                     const GraphRunner& run_default,
+                                     const GraphRunner& run_mkl,
+                                     bool transpose_a, bool transpose_b) { 
+    DataType dtype = DataTypeToEnum<T>::v();
+
+    Tensor input(dtype, transpose_a ? TensorShape({k, m}) : TensorShape({m, k}));
+    input.flat<T>() = input.flat<T>().template setRandom<random_gen_>();
+
+    Tensor weight(dtype, transpose_b ? TensorShape({n, k}) : TensorShape({k, n}));
+    weight.flat<T>() = weight.flat<T>().template setRandom<random_gen_>();
+
+    Tensor output;
+    Tensor mkl_output;
+
+    run_default(input, weight, &output, transpose_a, transpose_b);
+    run_mkl(input, weight, &mkl_output, transpose_a, transpose_b);
+
+    ASSERT_EQ(output.dtype(), mkl_output.dtype());
+    ASSERT_EQ(output.shape(), mkl_output.shape());
+
+    test::ExpectClose(output, mkl_output, 1e-5);
+  }
+
+ private:
+  using random_gen_ = Eigen::internal::NormalRandomGenerator<T>;
+};
+
+// Testing MatMul
+template <typename T>
+class MklMatMulOpTest : public OpsTestBase {
+ private:
+  void RunMklMatMulOp(const Tensor& input, const Tensor& weight,
+                           Tensor* output, bool transpose_a, bool transpose_b) {
+    DataType dtype = DataTypeToEnum<T>::v();
+    
+    TF_EXPECT_OK(
+        NodeDefBuilder("tuning_matmul", "TuningMatmul") //build node
+            .Input(FakeInput(dtype))
+            .Input(FakeInput(dtype))
+            .Attr("transpose_a", transpose_a)
+            .Attr("transpose_b", transpose_b)
+            .Attr("_kernel", "MklNameChangeOp")
+            .Finalize(node_def()));
+    TF_EXPECT_OK(InitOp()); //initial
+    AddInputFromArray<T>(input.shape(), input.flat<T>()); // A input 
+    AddInputFromArray<T>(weight.shape(), weight.flat<T>());
+    TF_EXPECT_OK(RunOpKernel()); //Run the node computation
+    *output = *GetOutput(0); //Get output
+  }
+
+ protected:
+  void VerifyMKLMatMul(int m, int k, int n, bool transpose_a, bool transpose_b){
+    const GraphRunner run_default =
+        [this](const Tensor& input, const Tensor& weight,
+              Tensor* output, bool transpose_a, bool transpose_b) {
+          auto root = tensorflow::Scope::NewRootScope();
+          auto input_op =
+              ops::Const(root.WithOpName("input"), Input::Initializer(input));
+          Output next_op = ops::MatMul(root.WithOpName("matmul"), input_op,
+                                       ops::Const(root.WithOpName("weight"),
+                                       Input::Initializer(weight)),
+                                       ops::MatMul::TransposeA(transpose_a).TransposeB(transpose_b)
+                                       );
+          string last_op = "matmul";
+          CommonTestUtilities<T>::RunAndFetch(root, last_op, output);
+        };
+
+    const GraphRunner run_mkl =
+        [this](const Tensor& input, const Tensor& weight,
+                Tensor* output, bool transpose_a, bool transpose_b) {
+          RunMklMatMulOp(input, weight, output, transpose_a, transpose_b);
+        };
+
+    CommonTestUtilities<T>::VerifyMKLMatrixClose(m, k, n,
+                                                 run_default, run_mkl,
+                                                 transpose_a, transpose_b);
+  }
+};
+
+TYPED_TEST_CASE_P(MklMatMulOpTest);
+
+#define REGISTER_TEST_CASE(M, K, N, TA, TB)                               \
+  TYPED_TEST_P(MklMatMulOpTest, Matmul##_##M##_##K##_##N##_##TA##_##TB) { \
+    this->VerifyMKLMatMul(M, K, N, TA, TB);                               \
+  }
+
+REGISTER_TEST_CASE(5, 8192, 4096, false, false);
+REGISTER_TEST_CASE(1024, 696, 64, false, false);
+REGISTER_TEST_CASE(1024, 184, 256, false, false);
+REGISTER_TEST_CASE(1024, 184, 64, false, false);
+REGISTER_TEST_CASE(204800, 200, 64, false, false);
+REGISTER_TEST_CASE(71680, 420, 64, false, false);
+REGISTER_TEST_CASE(51200, 356, 256, false, false);
+REGISTER_TEST_CASE(51200, 232, 64, false, false);
+REGISTER_TEST_CASE(20480, 260, 64, false, false);
+REGISTER_TEST_CASE(5120, 210, 64, false, false);
+REGISTER_TEST_CASE(204800, 200, 128, false, false);
+REGISTER_TEST_CASE(71680, 420, 128, false, false);
+REGISTER_TEST_CASE(51200, 356, 512, false, false);
+REGISTER_TEST_CASE(51200, 232, 128, false, false);
+REGISTER_TEST_CASE(20480, 260, 128, false, false);
+REGISTER_TEST_CASE(5120, 210, 128, false, false);
+
+REGISTER_TYPED_TEST_CASE_P(MklMatMulOpTest,
+                          Matmul_1024_184_256_false_false,
+                          Matmul_1024_184_64_false_false,
+                          Matmul_1024_696_64_false_false,
+                          Matmul_204800_200_128_false_false,
+                          Matmul_204800_200_64_false_false,
+                          Matmul_20480_260_128_false_false,
+                          Matmul_20480_260_64_false_false,
+                          Matmul_51200_232_128_false_false,
+                          Matmul_51200_232_64_false_false,
+                          Matmul_51200_356_256_false_false,
+                          Matmul_51200_356_512_false_false,
+                          Matmul_5120_210_128_false_false,
+                          Matmul_5120_210_64_false_false,
+                          Matmul_5_8192_4096_false_false,
+                          Matmul_71680_420_128_false_false,
+                          Matmul_71680_420_64_false_false
+                          );
+
+using MklMatMulDataTypes = ::testing::Types<float>;
+INSTANTIATE_TYPED_TEST_CASE_P(Test, MklMatMulOpTest,
+                              MklMatMulDataTypes);
 
 //----------------------------------------------------------------------------//
 // Performance benchmarks are below.                                          //
@@ -76,9 +254,9 @@ static Graph* Matmul(const string& kind, int m, int k, int n, bool transpose_a, 
   }                                                                                        \
   BENCHMARK(BM_Matmul##_##kind##_##M##_##K##_##N##_##TA##_##TB##_##T##_##DEVICE##_##NTH);  \
 
-#define BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, NTH)     \
-  BM_Matmul_Base(Tuning, M, K, N, TA, TB, T, DEVICE, NTH);  \
-  BM_Matmul_Base(Mkl, M, K, N, TA, TB, T, DEVICE, NTH);     \
+#define BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, NTH)    \
+  BM_Matmul_Base(Tuning, M, K, N, TA, TB, T, DEVICE, NTH); \
+  BM_Matmul_Base(Mkl, M, K, N, TA, TB, T, DEVICE, NTH);    \
 
 #define BM_Matmul_NTH(M, K, N, TA, TB, T, DEVICE) \
   BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 1);  \
@@ -88,10 +266,8 @@ static Graph* Matmul(const string& kind, int m, int k, int n, bool transpose_a, 
 
 #define BM_Matmul(M, K, N, TA, TB)                  \
   BM_Matmul_NTH(M, K, N, TA, TB, float, cpu);       \
-  // BM_Matmul_NTH(M, K, N, TA, TB, bfloat16, cpu); \
 
 
-// BM_Matmul(51200, 128, 128, false, false);
 BM_Matmul(5, 8192, 4096, false, false);
 BM_Matmul(1024, 696, 64, false, false);
 BM_Matmul(1024, 184, 256, false, false);
@@ -110,129 +286,7 @@ BM_Matmul(51200, 356, 512, false, false);
 BM_Matmul(51200, 232, 128, false, false);
 BM_Matmul(20480, 260, 128, false, false);
 BM_Matmul(5120, 210, 128, false, false);
-// BM_Matmul(16, 16, 16, false, false);
-/*
-// Batch size of 1 included for inference.
-// Typical fully connected layers
-BM_Matmul(1, 512, 512, false, false);
-BM_Matmul(8, 512, 512, false, false);
-BM_Matmul(16, 512, 512, false, false);
-BM_Matmul(128, 512, 512, false, false);
 
-BM_Matmul(1, 1024, 1024, false, false);
-BM_Matmul(8, 1024, 1024, false, false);
-BM_Matmul(16, 1024, 1024, false, false);
-BM_Matmul(128, 1024, 1024, false, false);
-BM_Matmul(4096, 4096, 4096, false, false);
-
-// Backward for fully connected layers
-BM_Matmul(1, 1024, 1024, false, true);
-BM_Matmul(8, 1024, 1024, false, true);
-BM_Matmul(16, 1024, 1024, false, true);
-BM_Matmul(128, 1024, 1024, false, true);
-
-// Forward softmax with large output size
-BM_Matmul(1, 200, 10000, false, false);
-BM_Matmul(8, 200, 10000, false, false);
-BM_Matmul(20, 200, 10000, false, false);
-BM_Matmul(20, 200, 20000, false, false);
-
-// Backward softmax with large output size
-BM_Matmul(1, 10000, 200, false, true);
-BM_Matmul(1, 10000, 200, false, false);
-BM_Matmul(8, 10000, 200, false, true);
-BM_Matmul(20, 10000, 200, false, true);
-BM_Matmul(20, 20000, 200, false, true);
-
-// Test some matrix-vector multiplies.
-BM_Matmul(50, 50, 1, false, false);
-BM_Matmul(50, 50, 1, true, false);
-BM_Matmul(50, 50, 1, false, true);
-BM_Matmul(50, 50, 1, true, true);
-BM_Matmul(500, 500, 1, false, false);
-BM_Matmul(500, 500, 1, true, false);
-BM_Matmul(500, 500, 1, false, true);
-BM_Matmul(500, 500, 1, true, true);
-BM_Matmul(2000, 2000, 1, false, false);
-BM_Matmul(2000, 2000, 1, true, false);
-BM_Matmul(2000, 2000, 1, false, true);
-BM_Matmul(2000, 2000, 1, true, true);
-
-// Test some vector-matrix multiplies.
-BM_Matmul(1, 50, 50, false, false);
-BM_Matmul(1, 50, 50, true, false);
-BM_Matmul(1, 50, 50, false, true);
-BM_Matmul(1, 50, 50, true, true);
-BM_Matmul(1, 500, 500, false, false);
-BM_Matmul(1, 500, 500, true, false);
-BM_Matmul(1, 500, 500, false, true);
-BM_Matmul(1, 500, 500, true, true);
-BM_Matmul(1, 2000, 2000, false, false);
-BM_Matmul(1, 2000, 2000, true, false);
-BM_Matmul(1, 2000, 2000, false, true);
-BM_Matmul(1, 2000, 2000, true, true);
-
-// Test some rank-one products.
-BM_Matmul(50, 1, 50, false, false);
-BM_Matmul(50, 1, 50, true, false);
-BM_Matmul(50, 1, 50, false, true);
-BM_Matmul(50, 1, 50, true, true);
-BM_Matmul(500, 1, 500, false, false);
-BM_Matmul(500, 1, 500, true, false);
-BM_Matmul(500, 1, 500, false, true);
-BM_Matmul(500, 1, 500, true, true);
-BM_Matmul(2000, 1, 2000, false, false);
-BM_Matmul(2000, 1, 2000, true, false);
-BM_Matmul(2000, 1, 2000, false, true);
-BM_Matmul(2000, 1, 2000, true, true);
-*/
-
-// Vector * Vector
-// BM_Matmul(1, 50, 1, false, false);
-// BM_Matmul(1, 2000, 1, false, false);
-// BM_Matmul(1024, 1024, 1024, false, false);
-
-// BM_Matmul(50, 1, 50, false, false);
-// BM_Matmul(2000, 1, 2000, false, false);
-
-// // Vector * Matrix
-// BM_Matmul(1, 50, 50, false, false);
-// BM_Matmul(1, 2000, 2000, false, false);
-
-// BM_Matmul(50, 50, 1, false, false);
-// BM_Matmul(2000, 2000, 1, false, false);
-
-// // Matrix * Matrix
-// BM_Matmul(32, 32, 32, false, false);
-// BM_Matmul(51200, 64, 64, false, false);
-// BM_Matmul(8, 512, 512, false, false);
-// BM_Matmul(128, 512, 512, false, false);
-// BM_Matmul(16, 1024, 1024, false, false);
-// BM_Matmul(256, 1024, 1024, false, false);
-// BM_Matmul(4096, 4096, 4096, false, false);
-
-// BM_Matmul(2560, 64, 1, false, false);
-// BM_Matmul(2560, 448, 1, false, false);
-// BM_Matmul(2560, 2304, 64, false, false);
-// BM_Matmul(2560, 1040, 1536, false, false);
-// BM_Matmul(2560, 14435, 2304, false, false);
-
-/*
-BM_Matmul(14435, 2560, 2304, true, false);
-BM_Matmul(2560, 2304, 14435, false, true);
-
-BM_Matmul(64, 2560, 1, true, false);
-BM_Matmul(2560, 1, 64, false, true);
-
-BM_Matmul(448, 2560, 1, true, false);
-BM_Matmul(2560, 1, 448, false, true);
-
-BM_Matmul(2304, 2560, 64, true, false);
-BM_Matmul(2560, 64, 2304, false, true);
-
-BM_Matmul(1040, 2560, 1536, true, false);
-BM_Matmul(2560, 1536, 1040, false, true);
-*/
 
 template <typename T>
 static Graph* FusedMatMul(const string& kind, int m, int k, int n,
