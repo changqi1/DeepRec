@@ -28,7 +28,7 @@ test_opts="--nocache_test_results \
            -c opt \
            --keep_going"
 
-test_targets="//tensorflow/python/kernel_tests:matmul_op_test"
+test_targets="//tensorflow/core/kernels:mkl_matmul_op_test"
 
 # BM_targets="//tensorflow/core/kernels:mkl_aggregate_ops_test \
 #             //tensorflow/core/kernels:mkl_batch_matmul_op_test \
@@ -70,7 +70,7 @@ function cpu_bazel_test_BM() {
   for test_target in ${BM_targets[@]}; do
     target_name=$(get_target_name $test_target)
     bazel test ${default_opts} ${mkl_opts} \
-      ${test_opts} ${test_options} --test_env=TF_CPP_MIN_VLOG_LEVEL=1 --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
+      ${test_opts} ${test_options} \
       -- ${test_target} # &> $target_name.log
   done
 }
