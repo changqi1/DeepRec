@@ -41,6 +41,7 @@ limitations under the License.
 #include "tensorflow/core/grappler/optimizers/remapper.h"
 #include "tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.h"
 #include "tensorflow/core/grappler/optimizers/shape_optimizer.h"
+#include "tensorflow/core/grappler/optimizers/sparse_embedding_optimizer.h"
 #include "tensorflow/core/grappler/utils/canonicalizer.h"
 #include "tensorflow/core/grappler/utils/colocation.h"
 #include "tensorflow/core/grappler/utils/functions.h"
@@ -116,6 +117,7 @@ bool AutoMixedPrecisionEnabled(RewriterConfig::Toggle opt_level) {
 
 std::unique_ptr<GraphOptimizer> MetaOptimizer::MakeNewOptimizer(
     const string& optimizer) const {
+  MK_OPT("sparse_embedding", new SparseEmbeddingOptimizer());
   MK_OPT("pruning", new ModelPruner());
   MK_OPT("function", new FunctionOptimizer(cfg_.function_optimization()));
   MK_OPT("constfold", new ConstantFolding(cpu_device_));
@@ -173,6 +175,9 @@ Status MetaOptimizer::InitializeOptimizers(
   }
   if (cfg_.shape_optimization() != RewriterConfig::OFF) {
     optimizers->push_back(MakeUnique<ShapeOptimizer>());
+  }
+  if (cfg_.sparse_embedding_optimization() != RewriterConfig::OFF) {
+    optimizers->push_back(MakeUnique<SparseEmbeddingOptimizer>());
   }
   if (cfg_.remapping() != RewriterConfig::OFF) {
     optimizers->push_back(MakeUnique<Remapper>(cfg_.remapping()));
@@ -735,6 +740,7 @@ bool MetaOptimizerEnabled(const ConfigProto& cfg) {
          rewrite_cfg.function_optimization() != RewriterConfig::OFF ||
          rewrite_cfg.constant_folding() != RewriterConfig::OFF ||
          rewrite_cfg.shape_optimization() != RewriterConfig::OFF ||
+         rewrite_cfg.sparse_embedding_optimization() != RewriterConfig::OFF ||
          rewrite_cfg.remapping() != RewriterConfig::OFF ||
          rewrite_cfg.arithmetic_optimization() != RewriterConfig::OFF ||
          rewrite_cfg.loop_optimization() != RewriterConfig::OFF ||
