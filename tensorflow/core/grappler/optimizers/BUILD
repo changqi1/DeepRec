@@ -606,6 +606,7 @@ cc_library(
         ":remapper",
         ":scoped_allocator_optimizer",
         ":shape_optimizer",
+        ":sparse_embedding_optimizer",
         "//tensorflow/core:core_cpu_base",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
@@ -774,6 +775,28 @@ tf_cuda_cc_test(
         "//tensorflow/core:testlib",
         "//tensorflow/core/grappler:grappler_item",
         "//tensorflow/core/grappler/utils:grappler_test",
+    ],
+)
+
+cc_library(
+    name = "sparse_embedding_optimizer",
+    srcs = ["sparse_embedding_optimizer.cc"],
+    hdrs = [
+        "sparse_embedding_optimizer.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":graph_optimizer",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/grappler:grappler_item",
+        "//tensorflow/core/grappler:mutable_graph_view",
+        "//tensorflow/core/grappler:op_types",
+        "//tensorflow/core/grappler:utils",
+        "//tensorflow/core/grappler/costs:graph_properties",
+        "//tensorflow/core/grappler/utils:frame",
+        "//tensorflow/core/grappler/utils:symbolic_shapes",
     ],
 )
 

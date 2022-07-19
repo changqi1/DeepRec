@@ -1045,6 +1045,7 @@ cc_library(
         ":one_hot_op",
         ":pack_op",
         ":pad_op",
+        ":sparse_embedding_with_shape_op",
         ":quantize_and_dequantize_op",
         ":reshape_op",
         ":reverse_op",
@@ -1216,6 +1217,16 @@ tf_kernel_library(
     name = "pad_op",
     prefix = "pad_op",
     deps = ARRAY_DEPS,
+)
+
+tf_kernel_library(
+    name = "sparse_embedding_with_shape_op",
+    visibility = ["//visibility:public"],
+    srcs = [
+        "sparse_embedding.cc",
+    ],
+
+    deps = ARRAY_DEPS + [":resource_variable_ops", ":variable_ops"],
 )
 
 tf_kernel_library(
