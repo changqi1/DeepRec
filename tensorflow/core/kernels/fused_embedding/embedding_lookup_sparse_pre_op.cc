@@ -48,6 +48,7 @@ inline void GetPartitionIndex<Part_Strategy::DIV>(
                         const int64_t idsPerPartition, const int64_t extras,
                         const int64_t originId, int64_t* segment, int64_t* newId) {
 #ifdef __AVX512F__
+  printf(">>> marvin-test: __AVX512F__ is enabled!!!");
   const int64_t *prange = id_table + numPartitions % 8;
   __m512i voffset = _mm512_set1_epi64(originId);
   int vectorSize = numPartitions / 8;
@@ -70,6 +71,7 @@ inline void GetPartitionIndex<Part_Strategy::DIV>(
     }
   }
 #else
+  printf(">>> marvin-test: __AVX512F__ is not enabled!!!");
   *segment = originId < extras * (idsPerPartition + 1) ?
             originId / (idsPerPartition + 1) :
             (originId - extras) / idsPerPartition;
