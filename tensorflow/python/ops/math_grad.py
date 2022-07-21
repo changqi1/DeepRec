@@ -1582,8 +1582,28 @@ def _MatMulGrad(op, grad):
   a = math_ops.conj(op.inputs[0])
   b = math_ops.conj(op.inputs[1])
   if not t_a and not t_b:
-    grad_a = gen_math_ops.mat_mul(grad, b, transpose_b=True)
-    grad_b = gen_math_ops.mat_mul(a, grad, transpose_a=True)
+    a_tensor = ops.convert_to_tensor(a)
+    if not a_tensor.get_shape().ndims:
+      rank = gen_array_ops.rank(a_tensor)
+      perm = (rank - 1) - gen_math_ops._range(0, rank, 1)
+    else:
+      rank = a_tensor.get_shape().ndims
+      perm = (rank - 1) - np.arange(rank)
+    a_t = gen_array_ops.transpose(a, perm=perm)
+
+    b_tensor = ops.convert_to_tensor(b)
+    if not b_tensor.get_shape().ndims:
+      rank = gen_array_ops.rank(b_tensor)
+      perm = (rank - 1) - gen_math_ops._range(0, rank, 1)
+    else:
+      rank = b_tensor.get_shape().ndims
+      perm = (rank - 1) - np.arange(rank)
+    b_t = gen_array_ops.transpose(b, perm=perm)
+
+    # grad_a = gen_math_ops.mat_mul(grad, b, transpose_b=True)
+    # grad_b = gen_math_ops.mat_mul(a, grad, transpose_a=True)
+    grad_a = gen_math_ops.mat_mul(grad, b_t)
+    grad_b = gen_math_ops.mat_mul(a_t, grad)
   elif not t_a and t_b:
     grad_a = gen_math_ops.mat_mul(grad, b)
     grad_b = gen_math_ops.mat_mul(grad, a, transpose_a=True)
