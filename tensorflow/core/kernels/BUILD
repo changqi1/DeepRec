@@ -4161,37 +4161,6 @@ tf_cc_test_mkl(
     ],
 )
 
-cc_import(
-    name = "libpta",
-    hdrs = glob([
-        "tuning_ops/host/**/*.h",
-    ]),
-    shared_library = "tuning_ops/host/libpta.so",
-    visibility = ["//visibility:public"],
-)
-
-cc_library(
-    name="host_proxy",
-    hdrs = glob([
-        "tuning_ops/host_proxy/*.h",
-    ]),
-    srcs = glob([
-        "tuning_ops/host_proxy/*.cpp",
-    ]),
-    copts = ["-fexceptions"],
-    nocopts = "-fno-exceptions",
-    includes = [
-        "tuning_ops/host/include",
-        "tuning_ops/host/include/DataTypes",
-        "tuning_ops/host/suite/Ackley",
-        "tuning_ops/host/suite/ExpSinFunc",
-        "tuning_ops/host/suite/NetworkAI",
-    ],
-    deps = [
-        ":libpta",
-    ]
-)
-
 tf_kernel_library(
     name = "tuning_matmul_op",
     srcs = glob([
@@ -4204,7 +4173,7 @@ tf_kernel_library(
         "tuning_ops/include",
         "tuning_ops/host_proxy",
     ],
-    deps = [":host_proxy"] + MATH_DEPS + mkl_deps(),
+    deps = ["//tensorflow/core/kernels/tuning_ops:host_proxy"] + MATH_DEPS + mkl_deps(),
 )
 
 tf_kernel_library(
