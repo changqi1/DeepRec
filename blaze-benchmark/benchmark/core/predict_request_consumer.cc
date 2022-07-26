@@ -1,4 +1,6 @@
 #include "benchmark/core/predict_request_consumer.h"
+#include <string>
+#include <fstream>
 
 using namespace tensorflow;
 namespace benchmark {
@@ -66,6 +68,17 @@ bool PredictRequestConsumer::PredictImpl(
     TensorProto proto;
     outputs[i].AsProtoField(&proto);
     VLOG(1) << "Output " << output_names[i] << " (output of session::run): "<< proto.DebugString();
+  }
+  {
+    static int _count = 1;
+    if(_count == 2500){
+      std::string outfile = "serialized";
+      meta.step_stats().SerializeToString(&outfile);
+      std::ofstream ofs("timeline" + std::to_string(_count));
+      ofs << outfile;
+      ofs.close();
+    }
+    _count++;
   }
   return true;
 }

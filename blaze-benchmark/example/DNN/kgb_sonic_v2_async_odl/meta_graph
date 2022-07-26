@@ -1,0 +1,26 @@
+signature_def {
+  key: "predict"
+  value {
+    #inputs {
+    #  key: "opt_seq_1/item_id_d-farm_emb"
+    #  value {
+    #    name: "opt_seq_1/item_id_d-farm_emb:0"
+    #    dtype: DT_FLOAT
+    #    tensor_shape {
+    #      dim {
+    #        size: 50
+    #      }
+    #      dim {
+    #        size: 128
+    #      }
+    #    }
+    #  }
+    #}
+    outputs {
+      key: "predict_output"
+      value {
+        name: "predict_output:0"
+      }
+    }
+  }
+}

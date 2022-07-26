@@ -1,0 +1,14 @@
+bench_model_config {
+   name : "kgb_sonic_v2"
+   frozen_graph : "kgb_sonic_v2_async_odl_parted_search.pbtxt"
+   #runmeta : "sonic_v2_runmeta/1658211774843721.runmeta"
+   runmeta : "1658211794322816.runmeta"
+   meta_graph : "meta_graph"
+   config_proto : "config_proto"
+   run_options : "run_options"
+   predictor_num : 4
+   qps: -1
+   switch_interval : 1500
+}
+bench_thread_count : 4
+duration : 100
