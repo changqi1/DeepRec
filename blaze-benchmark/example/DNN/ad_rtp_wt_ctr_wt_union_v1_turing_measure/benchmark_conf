@@ -5,10 +5,10 @@ bench_model_config {
    meta_graph: "meta_graph"
    config_proto: "config_proto"
    run_options: "run_options"
-   predictor_num: 20
+   predictor_num: 1
    qps: -1
    switch_interval: 3000
 }
-bench_thread_count: 48
+bench_thread_count : 1
 duration: 300
 #max_queue_size: 100

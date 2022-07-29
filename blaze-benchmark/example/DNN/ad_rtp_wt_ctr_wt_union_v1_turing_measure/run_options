@@ -1,4 +1,4 @@
 # trace_level: NO_TRACE
-trace_level: FULL_TRACE
+#trace_level: FULL_TRACE
 # trace_level: SOFTWARE_TRACE
-trace_tensor_infos: true
+#trace_tensor_infos: true
