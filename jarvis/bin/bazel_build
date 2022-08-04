@@ -11,7 +11,8 @@ default_opts="--remote_cache=http://crt-e302.sh.intel.com:9092 \
              --linkopt=-znoexecstack \
              --linkopt=-zrelro \
              --linkopt=-znow \
-             --linkopt=-fstack-protector"
+             --linkopt=-fstack-protector \
+             --copt=-march=skylake-avx512"
 
 # mkl_opts="--config=mkl \
 #            --define build_with_mkl_dnn_v1_only=true \
