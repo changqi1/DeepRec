@@ -27,7 +27,7 @@ class Model {
   }
 
   bool LoadGraph(const std::string& frozen_graph);
-  bool InitSession(const std::string& conf_proto);
+  bool InitSession(const std::string& conf_proto, bool extract);
   bool ParseRunOptions(const std::string& run_options);
   bool ParseSignatureDef(const std::string& meta_graph,
                          const std::string& signature_key,

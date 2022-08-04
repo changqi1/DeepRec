@@ -26,6 +26,8 @@ message BenchModelConfig {
     optional bool cold_switching = 10 [default = false];
     // simulate model switch: interval in seconds, 0 represents no switch
     optional int32 switch_interval = 11 [default = 0];
+    // extract graph from BlazeXlaOP
+    optional bool extract = 12 [default = false];
 }
 
 message BenchmarkConfig {

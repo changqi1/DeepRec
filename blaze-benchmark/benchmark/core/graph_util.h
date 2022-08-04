@@ -15,6 +15,8 @@ Status SetGraphDevice(GraphDef& gdef, int cpuid, int gpuid);
 
 Status SetBlazeOpAttributes(const std::string& folder_path, const ConfigProto& config, GraphDef* graph_def);
 
+Status ReplaceSubGraphDef(const std::string& folder_path, GraphDef* graph_def, std::vector<std::string>& output_names);
+
 Status StripUnusedNodes(const GraphDef& input_graph_def,
                         const std::vector<std::string>& output_names,
                         std::vector<std::pair<std::string, Tensor>>* inputs,
