@@ -125,9 +125,18 @@ bool Model::ParseSignatureDef(const std::string& meta_graph, const std::string& 
   return true;
 }
 
-bool Model::InitSession(const std::string& config_proto) {
+bool Model::InitSession(const std::string& config_proto, bool extract) {
+  Status s;
+  if(extract){
+    s = ReplaceSubGraphDef(graph_path_, &gdef_, output_names_);
+    if (!s.ok()) {
+      LOG(ERROR) << "replace BlazeXlaOP failed: " << name() << ", " << s.ToString();
+      return false;
+    }
+  }
+
   if (VLOG_IS_ON(1)) DumpGraphDefToFile(name() + ".before_strip", gdef_, "dump");
-  Status s = StripUnusedNodes(gdef_, output_names_, &inputs_, &gdef_);
+  s = StripUnusedNodes(gdef_, output_names_, &inputs_, &gdef_);
   if (!s.ok()) {
     LOG(ERROR) << "Strip graph failed: " << name() << ", " << s.ToString();
     return false;
@@ -363,7 +372,7 @@ Model* ModelReloader::CreateObject() {
   }
 
   // Init TensorFlow Session
-  if (!model->InitSession(bench_model_config_.config_proto())) {
+  if (!model->InitSession(bench_model_config_.config_proto(), bench_model_config_.extract())) {
     LOG(ERROR) << "Init tensorflow session failed: " << bench_model_config_.name();
     delete model;
     return nullptr;

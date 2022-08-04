@@ -8,6 +8,9 @@
 #include "tensorflow/core/protobuf/config.pb.h"
 #include "tensorflow/core/util/device_name_utils.h"
 
+#include "tensorflow/core/protobuf/saved_model.pb.h"
+#include "tensorflow/core/public/session.h"
+
 #include "benchmark/core/node_util.h"
 
 #if USE_CUDA
@@ -116,12 +119,95 @@ void RedirectEdgesInGraphDef(const std::set<std::string>& input_nodes,
   for (NodeDef& node : *(graph_def->mutable_node())) {
     for (std::string& input_name : *(node.mutable_input())) {
       std::string input_node = NodeNameFromInput(input_name);
-      std::string input_copy = NewNodeNameFromInput(input_name) + kDeepCopySuffix;
+      // std::string input_copy = NewNodeNameFromInput(input_name) + kDeepCopySuffix;
+      std::string input_copy = NewNodeNameFromInput(input_name);
       if (input_nodes.count(input_node) && node.name() != input_copy) {
         input_name = input_copy;
       }
     }
   }
+}
+
+Status AddSubGraphDef(const std::string& folder_path, const NodeDef& node, GraphDef* graph_def) {
+  if (!HasNodeAttr(node, kBlazeAttrGraph)) {
+    return errors::Internal("Blaze node ", node.DebugString(),
+                            " do not have attr ", kBlazeAttrGraph);
+  }
+
+  GraphDef sub_graph_def_;
+  std::string graph_path = folder_path + "/" + node.attr().at(kBlazeAttrGraph).s();
+  if (!ReadTextProto(Env::Default(), graph_path, &sub_graph_def_).ok()) {
+    if (!ReadBinaryProto(Env::Default(), graph_path, &sub_graph_def_).ok()) {
+      LOG(ERROR) << "Parse graph from " << graph_path << " failed";
+      return errors::Internal("Parse graph from ", graph_path, " failed");
+    }
+  }
+
+  std::map<std::string, std::string> inputs_lookup;
+  if (HasNodeAttr(node, "input_names")) {
+    auto list_value = node.attr().at("input_names").list();
+    if(list_value.s_size()!=node.input_size()){
+      LOG(ERROR) << "Parse graph from " << graph_path << " failed, inputs number is unmatch" << "node: " << node.DebugString();
+      return errors::Internal("Parse graph from ", graph_path, " failed, inputs number is unmatch");
+    }
+
+    for(int i=0; i<list_value.s_size(); ++i){
+      inputs_lookup[list_value.s(i)] = node.input(i);
+    }
+  }
+
+  for (NodeDef n : sub_graph_def_.node()) {
+    for(int i=0; i<n.input_size(); ++i){
+      if(inputs_lookup.count(n.input(i))<=0){
+        continue;
+      }
+      n.set_input(i, inputs_lookup[n.input(i)]);
+    }
+
+    *(graph_def->mutable_node()->Add()) = n;
+  }
+
+  return Status::OK();
+}
+
+// replace BlazeKernel OP
+Status ReplaceSubGraphDef(const std::string& folder_path, GraphDef* graph_def, std::vector<std::string>& output_names) {
+  for (const NodeDef& node : graph_def->node()) {
+  if (node.op() == kBlazeKernelName) {
+      Status s = AddSubGraphDef(folder_path, node, graph_def);
+      if (!s.ok()) {
+        LOG(ERROR) << "replace BlazeXlaOP failed: " << s.ToString();
+        return errors::Internal("replace BlazeXlaOP failed: ", s.ToString());
+      }
+
+      for(std::string& output_name : output_names){
+        std::string prefix;
+        std::string node_name;
+        std::string suffix;
+        NodeNamePartsFromInput(output_name, &prefix, &node_name, &suffix);
+
+        if(node.name()==node_name){
+          //TODO only one output now
+          std::string output_node_name = node.attr().at("output_names").list().s(0);
+          output_name = prefix + output_node_name + suffix;
+        }
+      }
+    }
+  }
+
+  GraphDef filtered_graph_def;
+  FilterGraphDef(*graph_def,
+                 [&](const NodeDef& node) {
+                   return node.op() != kBlazeKernelName;
+                 },
+                 &filtered_graph_def);
+
+  graph_def->Clear();
+  for (const NodeDef& node : filtered_graph_def.node()) {
+    *(graph_def->mutable_node()->Add()) = node;
+  }
+
+  return Status::OK();
 }
 
 Status StripUnusedNodes(const GraphDef& input_graph_def,
@@ -196,13 +282,13 @@ Status StripUnusedNodes(const GraphDef& input_graph_def,
         *(output_graph_def->mutable_node()->Add()) = placeholder_node;
 
         // Optimize GPU memcpy: add DeepCopy after input to allocate pinned memory and do async h2d memcpy
-        NodeDef copy_node;
-        copy_node.set_op("DeepCopy");
-        copy_node.set_name(NewNodeNameFromInput(iter.first) + kDeepCopySuffix);
-        SetNodeAttr("T", iter.second, &copy_node);
-        copy_node.add_input(placeholder_node.name());
-        copy_node.set_device("/device:CPU:0");
-        *(output_graph_def->mutable_node()->Add()) = copy_node;
+        // NodeDef copy_node;
+        // copy_node.set_op("DeepCopy");
+        // copy_node.set_name(NewNodeNameFromInput(iter.first) + kDeepCopySuffix);
+        // SetNodeAttr("T", iter.second, &copy_node);
+        // copy_node.add_input(placeholder_node.name());
+        // copy_node.set_device("/device:CPU:0");
+        // *(output_graph_def->mutable_node()->Add()) = copy_node;
       }
     } else {
       *(output_graph_def->mutable_node()->Add()) = node;
