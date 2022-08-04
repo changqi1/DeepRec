@@ -39,7 +39,7 @@ def read_step_state(step_states, output_dir):
         outfile.write(x)
 		
 if __name__ == "__main__":
-    file_name = "timeline500"
+    file_name = "timeline50"
     json_file = "timeline.json"
     read_step_state(file_name, json_file)
     load_timeline(json_file)

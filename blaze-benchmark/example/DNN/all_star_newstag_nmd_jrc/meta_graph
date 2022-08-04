@@ -2,9 +2,9 @@ signature_def {
   key: "predict"
   value {
     outputs {
-      key: "BlazeXlaOp"
+      key: "add"
       value {
-        name: "BlazeXlaOp:0"
+        name: "add:0"
       }
     }
   }

@@ -45,7 +45,7 @@ blaze_options {
     force_run_in_caller_thread: true,
     enable_graph_opt_place: true
   },
-  wait_ms: 20,
+  wait_ms: 2000000,
   use_single_threaded_executor: false,
   gemm_optimization: true
 }

@@ -8,8 +8,8 @@ graph_options {
 #inter_op_parallelism_threads: 1
 #intra_op_parallelism_threads: 1
 #allow_soft_placement: true
-#device_count {key: "CPU" value: 1}
-device_count {key: "GPU" value: 1}
+device_count {key: "CPU" value: 1}
+# device_count {key: "GPU" value: 1}
 gpu_options {
   allow_growth: true
   visible_device_list: "0"
@@ -42,7 +42,7 @@ blaze_options {
     force_run_in_caller_thread: true,
     enable_graph_opt_place: true
   },
-  wait_ms: 20,
+  wait_ms: 2000000,
   use_single_threaded_executor: false,
   gemm_optimization: true
 }

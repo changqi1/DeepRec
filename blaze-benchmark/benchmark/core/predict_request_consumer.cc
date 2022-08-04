@@ -69,17 +69,17 @@ bool PredictRequestConsumer::PredictImpl(
     outputs[i].AsProtoField(&proto);
     VLOG(1) << "Output " << output_names[i] << " (output of session::run): "<< proto.DebugString();
   }
-  // {
-  //   static int _count = 1;
-  //   if(_count == 2){
-  //     std::string outfile = "serialized";
-  //     meta.step_stats().SerializeToString(&outfile);
-  //     std::ofstream ofs("timeline" + std::to_string(_count));
-  //     ofs << outfile;
-  //     ofs.close();
-  //   }
-  //   _count++;
-  // }
+  {
+    static int _count = 1;
+    if(_count == 50){
+      std::string outfile = "serialized";
+      meta.step_stats().SerializeToString(&outfile);
+      std::ofstream ofs("timeline" + std::to_string(_count));
+      ofs << outfile;
+      ofs.close();
+    }
+    _count++;
+  }
   return true;
 }
 
