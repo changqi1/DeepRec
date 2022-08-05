@@ -84,9 +84,11 @@ class CommonTestUtilities : public OpsTestBase {
 
     Tensor input(dtype, TensorShape({1, pl, m, k}));
     input.flat<T>() = input.flat<T>().template setRandom<random_gen_>();
+    // input.flat<T>() = input.flat<T>().template setConstant(1);
 
     Tensor weight(dtype, TensorShape({bs, pl, k, n}));
     weight.flat<T>() = weight.flat<T>().template setRandom<random_gen_>();
+    // weight.flat<T>() = weight.flat<T>().template setConstant(1);
 
     Tensor output;
     Tensor opt_output;
@@ -97,7 +99,7 @@ class CommonTestUtilities : public OpsTestBase {
     ASSERT_EQ(output.dtype(), opt_output.dtype());
     ASSERT_EQ(output.shape(), opt_output.shape());
 
-    test::ExpectClose(output, opt_output, 1e-5);
+    test::ExpectClose(output, opt_output, 1e-4);
   }
 
  private:
@@ -171,11 +173,13 @@ TYPED_TEST_CASE_P(OptCoActionOpTest);
     this->VerifyOptCoAction(BS, PL, M, K, N);                                    \
   }
 
+// REGISTER_TEST_CASE(1, 1, 50, 5, 4);
 // REGISTER_TEST_CASE(200, 4, 50, 5, 4);
 REGISTER_TEST_CASE(200, 30, 150, 5, 4);
 
 REGISTER_TYPED_TEST_CASE_P(OptCoActionOpTest,
-                          // OptCoAction_200_4_50_5_4,
+                          // OptCoAction_1_1_50_5_4
+                          // OptCoAction_200_4_50_5_4
                           OptCoAction_200_30_150_5_4
                           );
 
