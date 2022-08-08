@@ -17,9 +17,9 @@ signature_def {
     #  }
     #}
     outputs {
-      key: "BlazeXlaOp"
+      key: "Softmax"
       value {
-        name: "BlazeXlaOp:0"
+        name: "Softmax:0"
       }
     }
   }
