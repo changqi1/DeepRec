@@ -29,6 +29,10 @@ limitations under the License.
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/kernels/fill_functor.h"
+#include "tensorflow/core/util/env_var.h"
+
+#include "tunable_matmul.h"
+#define TUNED_CONFIG_FILE "./tuned"
 
 // This header file is part of MKL ML, need equivalent file in MKL DNN
 #ifndef INTEL_MKL_DNN_ONLY
@@ -36,6 +40,14 @@ limitations under the License.
 #else
 #include "mkldnn.h"
 #endif
+
+void ShowLog(const std::string& msg = "") {
+  static auto _begin = std::chrono::high_resolution_clock::now();
+  auto _now = std::chrono::high_resolution_clock::now();
+  VLOG(1) << ">>>" << " time= "
+            << std::chrono::duration_cast<std::chrono::microseconds>(_now - _begin).count() << " us; message=" << msg;
+  _begin = _now;
+}
 
 namespace tensorflow {
 
@@ -47,6 +59,17 @@ class MklMatMulOp : public OpKernel {
   explicit MklMatMulOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
     OP_REQUIRES_OK(ctx, ctx->GetAttr("transpose_a", &transpose_a_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("transpose_b", &transpose_b_));
+
+    TF_CHECK_OK(ReadBoolFromEnvVar("TF_TUNING_ENABLE",
+                            /*default_val=*/true, &tune_));
+    TF_CHECK_OK(ReadBoolFromEnvVar("TF_TUNING_ENABLE_HOST",
+                            /*default_val=*/true, &host_));
+    TF_CHECK_OK(ReadInt64FromEnvVar("TF_TUNING_MAX_ITER",
+                            /*default_val=*/0, &max_iters_));
+    TF_CHECK_OK(ReadInt64FromEnvVar("TF_TUNING_ITER_PRE_CYCLE",
+                            /*default_val=*/0, &iter_per_cycle_));
+    tmm_ = new TunableMatmul();
+    tmm_->SetConditions(iter_per_cycle_, max_iters_);
   }
 
   void Compute(OpKernelContext* ctx) override {
@@ -99,6 +122,10 @@ class MklMatMulOp : public OpKernel {
     auto b_ptr = (b.template flat<T>().data());
     auto c_ptr = (out->template flat<T>().data());
 
+    if(tune_ && !transpose_a && !transpose_b && m > 64 && n > 64 && k > 64){
+      TuningGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
+                  transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
+    }
     MklBlasGemm(transpose_a, transpose_b, m, n, k, a_ptr, transpose_a ? m : k,
                 b_ptr, transpose_b ? k : n, c_ptr, n);
   }
@@ -106,6 +133,41 @@ class MklMatMulOp : public OpKernel {
  private:
   bool transpose_a_;
   bool transpose_b_;
+
+  TunableMatmul* tmm_;
+  int64 max_iters_ = 0;
+  int64 iter_per_cycle_ = 0;
+  bool tune_ = false;
+  bool host_ = false;
+
+  void TuningGemm(OpKernelContext* ctx, bool transa, bool transb, const int m,
+                  const int n, const int k, const float* a, const int lda,
+                  const float* b, const int ldb, float* c, const int ldc) {
+    // Timer t_;
+    /*tmm compute*/
+    tmm_->SetParams(transa, transb, m, n, k, lda, ldb, ldc, a, b, c);
+
+    // bool flush_b = false;
+    if (tune_) {
+      if(host_) {
+        ShowLog("// start of TuningGemm");
+        tmm_->host_tune(false, a, b, c);
+        ShowLog("// end of TuningGemm");
+      } else {
+        tmm_->tune(false, a, b, c);
+      }
+      // tmm_->save_config(TUNED_CONFIG_FILE);
+    } else {
+      if (!tmm_->load_config(TUNED_CONFIG_FILE)){
+          printf("Cannot load matmul config.\n");
+          // exit(-1);
+      }
+      tmm_->compute(a, b, c);
+    }
+    // printf("Host Compute Time: %f ms\n", t_.getTime());
+  }
+
+
   // --------------------------------------------------------------------------
   //
   // @brief Matrix-Matrix Multiplication with FP32 tensors, a, b, c using CBLAS

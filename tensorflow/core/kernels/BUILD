@@ -2970,6 +2970,37 @@ tf_kernel_library(
     ]),
 )
 
+cc_import(
+    name = "libpta",
+    hdrs = glob([
+        "tuning_ops/host/**/*.h",
+    ]),
+    shared_library = "tuning_ops/host/libpta.so",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name="host_proxy",
+    hdrs = glob([
+        "tuning_ops/host_proxy/*.h",
+    ]),
+    srcs = glob([
+        "tuning_ops/host_proxy/*.cpp",
+    ]),
+    copts = ["-fexceptions"],
+    nocopts = "-fno-exceptions",
+    includes = [
+        "tuning_ops/host/include",
+        "tuning_ops/host/include/DataTypes",
+        "tuning_ops/host/suite/Ackley",
+        "tuning_ops/host/suite/ExpSinFunc",
+        "tuning_ops/host/suite/NetworkAI",
+    ],
+    deps = [
+        ":libpta",
+    ]
+)
+
 tf_kernel_library(
     name = "matmul_op",
     srcs = [
@@ -2977,6 +3008,10 @@ tf_kernel_library(
     ] + if_mkl([
         "mkl_matmul_op.cc",
     ]),
+    includes = [
+        "tuning_ops/include",
+        "tuning_ops/host_proxy",
+    ],
     hdrs = ["matmul_op.h"],
     # Override EIGEN_STRONG_INLINE to inline when --define=override_eigen_strong_inline=true,
     # to avoid long compiling time. See https://github.com/tensorflow/tensorflow/issues/10521
@@ -2990,6 +3025,7 @@ tf_kernel_library(
     }),
     deps = MATH_DEPS + [
         ":gpu_util_hdrs",
+        ":host_proxy"
     ] + select({
         ":xsmm": [
             "@libxsmm_archive//:xsmm_avx",
