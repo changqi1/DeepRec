@@ -1,0 +1,4 @@
+[submodule "blaze-benchmark"]
+	path = blaze-benchmark
+	url = https://github.com/intel-sandbox/blaze-benchmark.git
+	branch = main
