@@ -8067,6 +8067,30 @@ tf_kernel_library(
     deps = MATH_DEPS,
 )
 
+tf_cuda_cc_test(
+    name = "co_action_op_test",
+    size = "small",
+    srcs = ["co_action_op_test.cc"],
+    deps = [
+        ":co_action_op",
+        ":ops_testutil",
+        ":ops_util",
+        ":quantized_ops",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/cc:client_session",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:framework_internal",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:tensorflow",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+        "@com_google_absl//absl/algorithm:container",
+    ],
+)
+
 tf_kernel_library(
     name = "indicator_matmul_op",
     hdrs = ["indicator_matmul_op.h"],

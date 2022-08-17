@@ -1936,6 +1936,45 @@ REGISTER_OP("CoAction")
       return Status::OK();
     });
 
+REGISTER_OP("OptCoAction")
+    .Input("x: T")
+    .Input("y: T")
+    .Output("output: T")
+    .Attr("T: {half, float}")
+    .Attr("pow_num: int >= 1")
+    .SetShapeFn([](InferenceContext* c) {
+      ShapeHandle a;
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 4, &a));
+      ShapeHandle b;
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 4, &b));
+      int pow_num;
+      TF_RETURN_IF_ERROR(c->GetAttr("pow_num", &pow_num));
+      DimensionHandle batch_a;
+      TF_RETURN_IF_ERROR(c->WithValue(c->Dim(a, 0), 1, &batch_a));
+      // Validate that the inner shapes are compatible.
+      DimensionHandle merged;
+      TF_RETURN_IF_ERROR(c->Merge(c->Dim(a, 3), c->Dim(b, 2), &merged));
+      // currently only support k=5, n=4, pow_num=2
+      DimensionHandle k, n;
+      TF_RETURN_IF_ERROR(c->WithValue(c->Dim(b, 2), 5, &k));
+      TF_RETURN_IF_ERROR(c->WithValue(c->Dim(b, 3), 4, &n));
+      if (c->Value(c->Dim(a, 2)) != 50 && c->Value(c->Dim(a, 2)) != 150) {
+        return errors::InvalidArgument(
+            "Currently we only support m = 150 or 50");
+      }
+      if (pow_num != 2) {
+        return errors::InvalidArgument("Currently we only support pow_num = 2");
+      }
+
+      // Validate that the parallel_num are compatible.
+      DimensionHandle parallel_merged;
+      TF_RETURN_IF_ERROR(
+          c->Merge(c->Dim(a, 1), c->Dim(b, 1), &parallel_merged));
+      c->set_output(0, c->MakeShape({c->Dim(b, 0), parallel_merged, pow_num,
+                                     c->Dim(b, 3)}));
+      return Status::OK();
+    });
+
 REGISTER_OP("CoActionIndicator")
     .Input("x: T")
     .Input("y: T")
