@@ -41,6 +41,46 @@ limitations under the License.
 #include "mkldnn.h"
 #endif
 
+const MatmulImpl TunableMatmul::impl_list[] = {
+    {"v1", v1},
+     {"v2", v2},
+     {"v3", v3},
+     {"v4", v4},
+     {"v5", v5},
+     {"v6", v6},
+     {"v7", v7},
+     {"v8", v8},
+     {"v9", v9},
+     {"v10", v10},
+     {"v11", v11},
+     {"v12", v12},
+     {"v13", v13},
+     {"v14", v14},
+     {"v15", v15},
+     {"v16", v16},
+     {"v17", v17},
+     {"v18", v18},
+     {"v19", v19},
+     {"v20", v20},
+     {"v21", v21},
+     {"v22", v22},
+     {"v23", v23},
+     {"v24", v24},
+     {"v100", v100},
+     {"v101", v101},
+     {"v102", v102},
+     {"v103", v103},
+     {"v104", v104},
+     {"v105", v105},
+     {"v106", v106},
+     {"v107", v107},
+     {"v108", v108},
+     {"v109", v109},
+     {"v110", v110},
+     {"v111", v111},
+    {"", nullptr},
+};
+
 void ShowLog(const std::string& msg = "") {
   static auto _begin = std::chrono::high_resolution_clock::now();
   auto _now = std::chrono::high_resolution_clock::now();
@@ -122,12 +162,14 @@ class MklMatMulOp : public OpKernel {
     auto b_ptr = (b.template flat<T>().data());
     auto c_ptr = (out->template flat<T>().data());
 
-    if(tune_ && !transpose_a && !transpose_b && m > 64 && n > 64 && k > 64){
-      TuningGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
+    if(tune_ && std::is_same<T, float>::value && m > 64 && n > 64 && k > 64){
+    	tmm_->SetThreadPool(&ctx->template eigen_device<Device>());
+	TuningGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
                   transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
-    }
-    MklBlasGemm(transpose_a, transpose_b, m, n, k, a_ptr, transpose_a ? m : k,
+    } else {
+    	MklBlasGemm(transpose_a, transpose_b, m, n, k, a_ptr, transpose_a ? m : k,
                 b_ptr, transpose_b ? k : n, c_ptr, n);
+    }
   }
 
  private:
@@ -236,6 +278,21 @@ class MklMatMulOp : public OpKernel {
 
   // MKLDNN only supports SGEMM
 #ifndef INTEL_MKL_DNN_ONLY
+  void TuningGemm(OpKernelContext* ctx, bool transa, bool transb, const int m,
+                  const int n, const int k, const double* a, const int lda,
+                  const double* b, const int ldb, double* c, const int ldc) {
+	VLOG(1) << "TuningGemm<double> not implemented!";
+  }
+  void TuningGemm(OpKernelContext* ctx, bool transa, bool transb, const int m,
+                  const int n, const int k, const complex64* a, const int lda,
+                  const complex64* b, const int ldb, complex64* c, const int ldc) {
+	VLOG(1) << "TuningGemm<complex64> not implemented!";
+  }
+  void TuningGemm(OpKernelContext* ctx, bool transa, bool transb, const int m,
+                  const int n, const int k, const complex128* a, const int lda,
+                  const complex128* b, const int ldb, complex128* c, const int ldc) {
+	VLOG(1) << "TuningGemm<complex128> not implemented!";
+  }
 
   // Matrix-Matrix Multiplication with FP64 tensors. For detailed info about
   // parameters, look at FP32 function description.

@@ -3001,6 +3001,29 @@ cc_library(
     ]
 )
 
+cc_import(
+    name = "libxsmm",
+    hdrs = glob([
+        "tuning_ops/libxsmm/include/*.h",
+    ]),
+    shared_library = "tuning_ops/libxsmm/lib/libxsmm.so",
+    visibility = ["//visibility:public"],
+)
+
+#tf_kernel_library(
+#    name = "tuning_matmul_op",
+#    srcs = glob([
+#	"tuning_ops/*.cc",
+#    ]),
+#    copts = ["-fexceptions", "-march=native"],
+#    nocopts = "-fno-exceptions",
+#    includes = [
+#        "tuning_ops/include",
+#        "tuning_ops/host_proxy",
+#    ],
+#    deps = [":host_proxy"] + MATH_DEPS + mkl_deps(),
+#)
+
 tf_kernel_library(
     name = "matmul_op",
     srcs = [
@@ -3011,6 +3034,7 @@ tf_kernel_library(
     includes = [
         "tuning_ops/include",
         "tuning_ops/host_proxy",
+        "tuning_ops/libxsmm/include",
     ],
     hdrs = ["matmul_op.h"],
     # Override EIGEN_STRONG_INLINE to inline when --define=override_eigen_strong_inline=true,
@@ -3025,6 +3049,7 @@ tf_kernel_library(
     }),
     deps = MATH_DEPS + [
         ":gpu_util_hdrs",
+	":libxsmm",
         ":host_proxy"
     ] + select({
         ":xsmm": [
@@ -3198,6 +3223,7 @@ tf_cuda_cc_test(
     srcs = ["matmul_op_test.cc"],
     deps = [
         ":matmul_op",
+#        ":tuning_matmul_op",
         ":ops_testutil",
         ":ops_util",
         ":quantized_ops",
@@ -3211,6 +3237,7 @@ tf_cuda_cc_test(
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
+	"//tensorflow/core:tensorflow",
     ],
 )
 

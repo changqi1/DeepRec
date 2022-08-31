@@ -1,7 +1,9 @@
 #!/bin/bash
 
 default_opts="--cxxopt=-D_GLIBCXX_USE_CXX11_ABI=0 \
-             --copt=-O2 \
+	      --copt=-O2 \
+             --cxxopt=-std=c++14 \
+             --config=opt \
              --copt=-Wformat \
              --copt=-Wformat-security \
              --copt=-fstack-protector \
@@ -23,7 +25,7 @@ test_opts="--nocache_test_results \
            --flaky_test_attempts 1 \
            --test_timeout 99999999 \
            --test_size_filters=small,medium,large,enormous \
-           -c opt \
+	    -c opt \
            --keep_going"
 
 test_targets="//tensorflow/core/kernels:matmul_op_test"

@@ -7,6 +7,11 @@
 #include <immintrin.h>
 #include <emmintrin.h>
 
+#define USE_LIBXSMM
+
+#ifndef USE_LIBXSMM
+
+
 #define INDEX(x, y, ld) ((x) * (ld) + (y))
 #define ADDRESS(p, x, y, ld) ((p) + (x) * (ld) + (y))
 
@@ -1266,9 +1271,12 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
 
 } // end namespace lbf
 
+#endif //ndef USE_LIBXSMM
+
 
 template<int M, int N, int K, int lda, int ldb, int ldc, bool ACC>
 void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
+#ifndef USE_LIBXSMM
   constexpr const int COLS = N / 16;
 
   if constexpr (COLS <= 4) {
@@ -1276,10 +1284,12 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
   } else {
     laf::small_gemm_fixmnk_fixldabc<M, N, K, lda, ldb, ldc, ACC>(A, B, C);
   }
+#endif
 }
 
 template<int M, int N, bool ACC>
 void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int K) {
+#ifndef USE_LIBXSMM
   constexpr const int COLS = N / 16;
 
   if constexpr (COLS <= 4) {
@@ -1287,10 +1297,12 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
   } else {
     laf::small_gemm_fixmn<M, N, ACC>(A, B, C, lda, ldb, ldc, K);
   }
+#endif
 }
 
 template<int N, bool ACC>
 void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int M, int K) {
+#ifndef USE_LIBXSMM
   constexpr const int COLS = N / 16;
 
   if constexpr (COLS <= 4) {
@@ -1298,10 +1310,12 @@ void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb,
   } else {
     laf::small_gemm_fixn<N, ACC>(A, B, C, lda, ldb, ldc, M, K);
   }
+#endif
 }
 
 template<int M, bool ACC>
 void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int N, int K) {
+#ifndef USE_LIBXSMM
   constexpr const int max_supported_cols = 8;
   auto COLS = (N + 15) / 16;
 
@@ -1348,10 +1362,12 @@ void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb,
       laf::small_gemm_fixm<M, (max_supported_cols - 7) * 16, ACC>(A, B, C, lda, ldb, ldc, N, K);
     }
   }
+#endif
 }
 
 template<bool ACC>
 void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int M, int N, int K) {
+#ifndef USE_LIBXSMM
   constexpr const int max_supported_cols = 8;
   auto COLS = (N + 15) / 16;
 
@@ -1398,4 +1414,23 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
       laf::small_gemm_nofix<(max_supported_cols - 7) * 16, ACC>(A, B, C, lda, ldb, ldc, M, N, K);
     }
   }
+#endif
 }
+
+#ifdef USE_LIBXSMM
+
+#include "libxsmm.h"
+void small_gemm_libxsmm(bool transa, bool transb, const float *A, const float *B, float *C, int lda, int ldb, int ldc, int M, int N, int K, bool ACC) {
+  float alpha = 1.0, beta = 0.0;
+  if (ACC) {
+        beta = 1.0;
+  }
+  char ta[] = "N";
+  char tb[] = "N";
+  if (transa)
+        ta[0] = 'T';
+  if (transb)
+        tb[0] = 'T';
+  libxsmm_sgemm(tb, ta, &N, &M, &K, &alpha, B, &ldb, A, &lda, &beta, C, &ldc);
+}
+#endif

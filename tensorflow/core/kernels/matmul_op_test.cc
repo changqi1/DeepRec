@@ -18,7 +18,161 @@ limitations under the License.
 #include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/platform/test_benchmark.h"
 
+#include "tensorflow/cc/ops/standard_ops.h"
+#include "tensorflow/core/kernels/ops_testutil.h"
+#include "tensorflow/core/kernels/ops_util.h"
+#include "tensorflow/core/protobuf/rewriter_config.pb.h"
+#include "tensorflow/core/public/session.h"
+
+#include "tensorflow/core/framework/fake_input.h"
+
+
 namespace tensorflow {
+
+//----------------------------------------------------------------------------//
+// MatMul Unit Tests are below.                                               //
+//----------------------------------------------------------------------------//
+
+
+using GraphRunner =
+    std::function<void(const Tensor& input_data, const Tensor& filter_data, Tensor* out, bool transpose_a, bool transpose_b)>;
+
+template <typename T>
+class CommonTestUtilities : public OpsTestBase {
+ public:
+  void PerformConversion(DataType dtype, const Tensor& tensor, Tensor* output) { // Default, convert shape
+    TF_EXPECT_OK(InitOp());
+    AddInputFromArray<T>(tensor.shape(), tensor.flat<T>());
+    TF_ASSERT_OK(RunOpKernel());
+
+    *output = *GetOutput(0);
+  }
+
+  // Runs a Tensorflow graph defined by the root scope, and fetches the result
+  // of 'fetch' node into the output Tensor.
+  static void RunAndFetch(const tensorflow::Scope& root, const string& fetch,
+                          Tensor* output) {
+    tensorflow::GraphDef graph;
+    TF_ASSERT_OK(root.ToGraphDef(&graph));
+
+    std::unique_ptr<tensorflow::Session> session(
+        tensorflow::NewSession(tensorflow::SessionOptions()));
+    TF_ASSERT_OK(session->Create(graph));
+
+    std::vector<Tensor> unfused_tensors;
+    TF_ASSERT_OK(session->Run({}, {fetch}, {}, &unfused_tensors));
+
+    *output = unfused_tensors[0];
+  }
+
+  void TestBody() {}
+
+  // Compare two outcomes default & mkl by calling run_default() & run_mkl()
+  static void VerifyMKLMatrixClose(int m, int k, int n,
+                                     const GraphRunner& run_default,
+                                     const GraphRunner& run_mkl,
+                                     bool transpose_a, bool transpose_b) { 
+    DataType dtype = DataTypeToEnum<T>::v();
+
+    Tensor input(dtype, transpose_a ? TensorShape({k, m}) : TensorShape({m, k}));
+    input.flat<T>() = input.flat<T>().template setRandom<random_gen_>();
+
+    Tensor weight(dtype, transpose_b ? TensorShape({n, k}) : TensorShape({k, n}));
+    weight.flat<T>() = weight.flat<T>().template setRandom<random_gen_>();
+
+    Tensor output;
+    Tensor mkl_output;
+
+    run_mkl(input, weight, &mkl_output, transpose_a, transpose_b);
+    run_default(input, weight, &output, transpose_a, transpose_b);
+
+    ASSERT_EQ(output.dtype(), mkl_output.dtype());
+    ASSERT_EQ(output.shape(), mkl_output.shape());
+    test::ExpectClose(output, mkl_output, 1.5e-5, 1.0e-3);
+  }
+
+ private:
+  using random_gen_ = Eigen::internal::NormalRandomGenerator<T>;
+};
+
+// Testing MatMul
+template <typename T>
+class MklMatMulOpTest : public OpsTestBase {
+ private:
+  void RunMklMatMulOp(const Tensor& input, const Tensor& weight,
+                           Tensor* output, bool transpose_a, bool transpose_b) {
+    DataType dtype = DataTypeToEnum<T>::v();
+    
+    TF_EXPECT_OK(
+        NodeDefBuilder("tuning_matmul", "MatMul") //build node
+            .Input(FakeInput(dtype))
+            .Input(FakeInput(dtype))
+            .Attr("transpose_a", transpose_a)
+            .Attr("transpose_b", transpose_b)
+            .Finalize(node_def()));
+    TF_EXPECT_OK(InitOp()); //initial
+    AddInputFromArray<T>(input.shape(), input.flat<T>()); // A input 
+    AddInputFromArray<T>(weight.shape(), weight.flat<T>());
+    TF_EXPECT_OK(RunOpKernel()); //Run the node computation
+    *output = *GetOutput(0); //Get output
+  }
+
+ protected:
+  void VerifyMKLMatMul(int m, int k, int n, bool transpose_a, bool transpose_b){
+    const GraphRunner run_default =
+        [this](const Tensor& input, const Tensor& weight,
+              Tensor* output, bool transpose_a, bool transpose_b) {
+          auto root = tensorflow::Scope::NewRootScope();
+          auto input_op =
+              ops::Const(root.WithOpName("input"), Input::Initializer(input));
+	  setenv("TF_TUNING_ENABLE", "false", 1);
+          Output next_op = ops::MatMul(root.WithOpName("matmul"), input_op,
+                                       ops::Const(root.WithOpName("weight"),
+                                       Input::Initializer(weight)),
+                                       ops::MatMul::TransposeA(transpose_a).TransposeB(transpose_b)
+                                       );
+          string last_op = "matmul";
+          CommonTestUtilities<T>::RunAndFetch(root, last_op, output);
+	  unsetenv("TF_TUNING_ENABLE");
+        };
+
+    const GraphRunner run_mkl =
+        [this](const Tensor& input, const Tensor& weight,
+                Tensor* output, bool transpose_a, bool transpose_b) {
+          RunMklMatMulOp(input, weight, output, transpose_a, transpose_b);
+        };
+
+    CommonTestUtilities<T>::VerifyMKLMatrixClose(m, k, n,
+                                                 run_default, run_mkl,
+                                                 transpose_a, transpose_b);
+  }
+};
+
+TYPED_TEST_CASE_P(MklMatMulOpTest);
+
+#define REGISTER_TEST_CASE(M, K, N, TA, TB)                               \
+  TYPED_TEST_P(MklMatMulOpTest, Matmul##_##M##_##K##_##N##_##TA##_##TB) { \
+    this->VerifyMKLMatMul(M, K, N, TA, TB);                               \
+  }
+
+REGISTER_TEST_CASE(128, 256, 512, false, false);
+REGISTER_TEST_CASE(128, 256, 512, false, true);
+REGISTER_TEST_CASE(128, 256, 512, true, false);
+REGISTER_TEST_CASE(128, 256, 512, true, true);
+REGISTER_TYPED_TEST_CASE_P(MklMatMulOpTest,
+                          Matmul_128_256_512_false_true,
+                          Matmul_128_256_512_true_false,
+                          Matmul_128_256_512_true_true,
+                          Matmul_128_256_512_false_false
+                          );
+
+using MklMatMulDataTypes = ::testing::Types<float>;
+INSTANTIATE_TYPED_TEST_CASE_P(Test, MklMatMulOpTest,
+                              MklMatMulDataTypes);
+
+//----------------------------------------------------------------------------//
+// Performance benchmarks are below.                                          //
+//----------------------------------------------------------------------------//
 
 template <typename T>
 static Graph* Matmul(int m, int k, int n, bool transpose_a, bool transpose_b,
@@ -58,7 +212,10 @@ static Graph* Matmul(int m, int k, int n, bool transpose_a, bool transpose_b,
 BM_Matmul(1, 512, 512, false, false);
 BM_Matmul(8, 512, 512, false, false);
 BM_Matmul(16, 512, 512, false, false);
-BM_Matmul(128, 512, 512, false, false);
+BM_Matmul(128, 256, 512, false, false);
+BM_Matmul(128, 256, 512, false, true);
+BM_Matmul(128, 256, 512, true, false);
+BM_Matmul(128, 256, 512, true, true);
 
 // BM_Matmul(1, 1024, 1024, false, false);
 // BM_Matmul(8, 1024, 1024, false, false);

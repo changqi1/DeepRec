@@ -160,10 +160,10 @@ struct MatmulConfig
         exit(-1);                                     \
     }
 
-static T* transpose(const T *src, T *dst, int src_stride, int src_length, int dst_ld) {
+static T* transpose(const T *src, T *dst, int src_stride, int src_length, int src_ld, int dst_ld) {
   for(int i = 0; i < src_length; i++){
     for(int j = 0; j < src_stride; j++){
-      dst[j * dst_ld + i] = src[i * src_stride + j];
+      dst[j * dst_ld + i] = src[i * src_ld + j];
     }
   }
   return dst;
@@ -197,10 +197,12 @@ static T* transpose(const T *src, T *dst, int src_stride, int src_length, int ds
     task_pool_param.reserve(mmsize.mgroups * mmsize.ngroups);                                           \
 
 
+#ifndef USE_LIBXSMM												 \
+
 #define FUNC_CORE_CAL                                                                                            \
-  {                                                                                                              \
+  {                    												 \
     T *fake_A = mmsize.ta ? new T[mmsize.bm * mmsize.bk] : nullptr;                                              \
-    T *fake_B = mmsize.ta ? new T[mmsize.bk * mmsize.bn] : nullptr;                                              \
+    T *fake_B = mmsize.tb ? new T[mmsize.bk * mmsize.bn] : nullptr;                                              \
     int i_off = (ig * mmsize.mblocks_per_group + i) * mmsize.bm;                                                 \
     int j_off = (jg * mmsize.nblocks_per_group + j) * mmsize.bn;                                                 \
     int k_off = (kg * mmsize.kblocks_per_group + k) * mmsize.bk;                                                 \
@@ -211,8 +213,8 @@ static T* transpose(const T *src, T *dst, int src_stride, int src_length, int ds
       int realbm = mmsize.m - i_off >= mmsize.bm ? mmsize.bm : (mmsize.m - i_off);                               \
       int realbn = mmsize.n - j_off >= mmsize.bn ? mmsize.bn : (mmsize.n - j_off);                               \
       int realbk = mmsize.k - k_off >= mmsize.bk ? mmsize.bk : (mmsize.k - k_off);                               \
-      const T *pa = mmsize.ta ? transpose(&A[k_off * mmsize.lda + i_off], fake_A, realbm, realbk, mmsize.bk) : &A[i_off * mmsize.lda + k_off]; \
-      const T *pb = mmsize.tb ? transpose(&B[j_off * mmsize.ldb + k_off], fake_B, realbk, realbn, mmsize.bn) : &B[k_off * mmsize.ldb + j_off]; \
+      const T *pa = mmsize.ta ? transpose(&A[k_off * mmsize.lda + i_off], fake_A, realbm, realbk, mmsize.lda, mmsize.bk) : &A[i_off * mmsize.lda + k_off]; \
+      const T *pb = mmsize.tb ? transpose(&B[j_off * mmsize.ldb + k_off], fake_B, realbk, realbn, mmsize.ldb, mmsize.bn) : &B[k_off * mmsize.ldb + j_off]; \
       T *pc = &C[i_off * mmsize.ldc + j_off];                                                                    \
       if (realbm == mmsize.bm)                                                                                   \
       {                                                                                                          \
@@ -265,9 +267,37 @@ static T* transpose(const T *src, T *dst, int src_stride, int src_length, int ds
         }                                                                                                        \
       }                                                                                                          \
     }                                                                                                            \
-    if(mmsize.ta) delete[] fake_A;                                                                               \
-    if(mmsize.tb) delete[] fake_B;                                                                               \
+    if (mmsize.ta) delete[] fake_A;									 	 \
+    if (mmsize.tb) delete[] fake_B;										 \
   }                                                                                                              \
+
+#else
+
+#define FUNC_CORE_CAL                                                                                            \
+  {                    												 \
+    int i_off = (ig * mmsize.mblocks_per_group + i) * mmsize.bm;                                                 \
+    int j_off = (jg * mmsize.nblocks_per_group + j) * mmsize.bn;                                                 \
+    int k_off = (kg * mmsize.kblocks_per_group + k) * mmsize.bk;                                                 \
+    if (i_off < mmsize.m && j_off < mmsize.n && k_off < mmsize.k)                                                \
+    {                                                                                                            \
+      int realbm = mmsize.m - i_off >= mmsize.bm ? mmsize.bm : (mmsize.m - i_off);                               \
+      int realbn = mmsize.n - j_off >= mmsize.bn ? mmsize.bn : (mmsize.n - j_off);                               \
+      int realbk = mmsize.k - k_off >= mmsize.bk ? mmsize.bk : (mmsize.k - k_off);                               \
+      T *pc = &C[i_off * mmsize.ldc + j_off];                                                                    \
+      const T* pa = mmsize.ta? &A[k_off * mmsize.lda + i_off] : &A[i_off * mmsize.lda + k_off];			\
+      const T* pb = mmsize.tb? &B[j_off * mmsize.ldb + k_off] : &B[k_off * mmsize.ldb + j_off];			\
+      int lda = mmsize.ta ? mmsize.m : mmsize.lda;							\
+      int ldb = mmsize.tb ? mmsize.k : mmsize.ldb;							\
+      if (k_off != 0) {											\
+      	small_gemm_libxsmm(mmsize.ta, mmsize.tb, pa, pb, pc, lda, ldb, mmsize.ldc, realbm, realbn, realbk, true);	\
+      } else {														\
+      	small_gemm_libxsmm(mmsize.ta, mmsize.tb, pa, pb, pc, lda, ldb, mmsize.ldc, realbm, realbn, realbk, false);	\
+      }															\
+    }                                                                                                            \
+  }                                                                                                              \
+
+#endif																\
+
 
 #define FUNC_DEF_TAIL                                                       \
   int kg = 0;                                                               \
@@ -324,29 +354,30 @@ static void v1(const T* A, const T* B, T* C, const MatmulSize& mmsize,
       std::tie(ig, jg, i, j) = task_pool_param[index];
       for (int k = 0; k < mmsize.kblocks_per_group; ++k) {
         {
-          T* fake_A = mmsize.ta ? new T[mmsize.bm * mmsize.bk] : nullptr;
-          T* fake_B = mmsize.ta ? new T[mmsize.bk * mmsize.bn] : nullptr;
           int i_off = (ig * mmsize.mblocks_per_group + i) * mmsize.bm;
           int j_off = (jg * mmsize.nblocks_per_group + j) * mmsize.bn;
           int k_off = (kg * mmsize.kblocks_per_group + k) * mmsize.bk;
           if (i_off < mmsize.m && j_off < mmsize.n && k_off < mmsize.k) {
-            int lda = mmsize.ta ? mmsize.bk : mmsize.lda;
-            int ldb = mmsize.tb ? mmsize.bn : mmsize.ldb;
             int realbm =
                 mmsize.m - i_off >= mmsize.bm ? mmsize.bm : (mmsize.m - i_off);
             int realbn =
                 mmsize.n - j_off >= mmsize.bn ? mmsize.bn : (mmsize.n - j_off);
             int realbk =
                 mmsize.k - k_off >= mmsize.bk ? mmsize.bk : (mmsize.k - k_off);
+            T* pc = &C[i_off * mmsize.ldc + j_off];
+#ifndef USE_LIBXSMM
+            T* fake_A = mmsize.ta ? new T[mmsize.bm * mmsize.bk] : nullptr;
+            T* fake_B = mmsize.tb ? new T[mmsize.bk * mmsize.bn] : nullptr;
+            int lda = mmsize.ta ? mmsize.bk : mmsize.lda;
+            int ldb = mmsize.tb ? mmsize.bn : mmsize.ldb;
             const T* pa = mmsize.ta
                               ? transpose(&A[k_off * mmsize.lda + i_off],
-                                          fake_A, realbm, realbk, mmsize.bk)
+                                          fake_A, realbm, realbk, mmsize.lda, mmsize.bk)
                               : &A[i_off * mmsize.lda + k_off];
             const T* pb = mmsize.tb
                               ? transpose(&B[j_off * mmsize.ldb + k_off],
-                                          fake_B, realbk, realbn, mmsize.bn)
+                                          fake_B, realbk, realbn, mmsize.ldb, mmsize.bn)
                               : &B[k_off * mmsize.ldb + j_off];
-            T* pc = &C[i_off * mmsize.ldc + j_off];
             if (realbm == mmsize.bm) {
               if (realbn == mmsize.bn) {
                 if (k_off != 0) {
@@ -384,9 +415,23 @@ static void v1(const T* A, const T* B, T* C, const MatmulSize& mmsize,
                 }
               }
             }
+            if (mmsize.ta) delete[] fake_A;
+            if (mmsize.tb) delete[] fake_B;
+#else
+            const T* pa = mmsize.ta
+                              ? &A[k_off * mmsize.lda + i_off] : &A[i_off * mmsize.lda + k_off];
+            const T* pb = mmsize.tb
+                              ? &B[j_off * mmsize.ldb + k_off] : &B[k_off * mmsize.ldb + j_off];
+            int lda = mmsize.ta ? mmsize.m : mmsize.lda;
+            int ldb = mmsize.tb ? mmsize.k : mmsize.ldb;
+            if (k_off != 0) {
+	    	small_gemm_libxsmm(mmsize.ta, mmsize.tb, pa, pb, pc, lda, ldb, mmsize.ldc, realbm, realbn, realbk, true);
+	    } else {
+	    	small_gemm_libxsmm(mmsize.ta, mmsize.tb, pa, pb, pc, lda, ldb, mmsize.ldc, realbm, realbn, realbk, false);
+            }
+
+#endif
           }
-          if (mmsize.ta) delete[] fake_A;
-          if (mmsize.tb) delete[] fake_B;
         }
       }
     }
@@ -694,7 +739,7 @@ public:
 
         int impl_id = this->space[IMPL].min_max_value[params[IMPL]];
         const MatmulImpl& matmulImpl = impl_list[impl_id];
-        
+
         // std::cout << "mmsize.bm = " << mmsize.bm << std::endl;
         // std::cout << "mmsize.bn = " << mmsize.bn << std::endl;
         // std::cout << "mmsize.bk = " << mmsize.bk << std::endl;
