@@ -1421,6 +1421,7 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
 
 #include "libxsmm.h"
 void small_gemm_libxsmm(bool transa, bool transb, const float *A, const float *B, float *C, int lda, int ldb, int ldc, int M, int N, int K, bool ACC) {
+  assert(N <= 64 && M <= 64 && K <= 64); // libxsmm with noblas
   float alpha = 1.0, beta = 0.0;
   if (ACC) {
         beta = 1.0;

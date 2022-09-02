@@ -155,15 +155,15 @@ TYPED_TEST_CASE_P(MklMatMulOpTest);
     this->VerifyMKLMatMul(M, K, N, TA, TB);                               \
   }
 
-REGISTER_TEST_CASE(128, 256, 512, false, false);
-REGISTER_TEST_CASE(128, 256, 512, false, true);
-REGISTER_TEST_CASE(128, 256, 512, true, false);
-REGISTER_TEST_CASE(128, 256, 512, true, true);
+REGISTER_TEST_CASE(204800, 200, 128, false, false);
+REGISTER_TEST_CASE(204800, 200, 128, false, true);
+REGISTER_TEST_CASE(204800, 200, 128, true, false);
+REGISTER_TEST_CASE(204800, 200, 128, true, true);
 REGISTER_TYPED_TEST_CASE_P(MklMatMulOpTest,
-                          Matmul_128_256_512_false_true,
-                          Matmul_128_256_512_true_false,
-                          Matmul_128_256_512_true_true,
-                          Matmul_128_256_512_false_false
+                          Matmul_204800_200_128_false_true,
+                          Matmul_204800_200_128_true_false,
+                          Matmul_204800_200_128_true_true,
+                          Matmul_204800_200_128_false_false
                           );
 
 using MklMatMulDataTypes = ::testing::Types<float>;
@@ -175,113 +175,70 @@ INSTANTIATE_TYPED_TEST_CASE_P(Test, MklMatMulOpTest,
 //----------------------------------------------------------------------------//
 
 template <typename T>
-static Graph* Matmul(int m, int k, int n, bool transpose_a, bool transpose_b,
-                     DataType type) {
+static Graph* Matmul(const string& kind, int m, int k, int n, bool transpose_a, bool transpose_b) {
   Graph* g = new Graph(OpRegistry::Global());
+  DataType type = DataTypeToEnum<T>::v();
+  const bool isDefault = (kind == "eigen");
+  // string op_name = isDefault ? "TuningMatmul" : "_MklMatMul";
+  string op_name = isDefault ? "MatMul" : "MatMul";
   Tensor in0(type, transpose_a ? TensorShape({k, m}) : TensorShape({m, k}));
   in0.flat<T>().setRandom();
   Tensor in1(type, transpose_b ? TensorShape({n, k}) : TensorShape({k, n}));
   in1.flat<T>().setRandom();
-  test::graph::Matmul(g, test::graph::Constant(g, in0),
-                      test::graph::Constant(g, in1), transpose_a, transpose_b);
+  auto nodeBuilder = NodeBuilder(g->NewName("n"), op_name)
+                    .Input(test::graph::Constant(g, in0))
+                    .Input(test::graph::Constant(g, in1))
+                    .Attr("transpose_a", transpose_a)
+                    .Attr("transpose_b", transpose_b);
+  isDefault ? nodeBuilder.Attr("_kernel", "eigen") : nodeBuilder;
+  TF_CHECK_OK(nodeBuilder.Finalize(g, nullptr));
   return g;
 }
 
-#define BM_MatmulDev(M, K, N, TA, TB, T, TFTYPE, DEVICE)                       \
-  static void BM_Matmul##_##M##_##K##_##N##_##TA##_##TB##_##TFTYPE##_##DEVICE( \
-      int iters) {                                                             \
-    testing::UseRealTime();                                                    \
-    testing::ItemsProcessed(static_cast<int64>(iters) * M * K * N * 2);        \
-    test::Benchmark(#DEVICE, Matmul<T>(M, K, N, TA, TB, TFTYPE)).Run(iters);   \
-  }                                                                            \
-  BENCHMARK(BM_Matmul##_##M##_##K##_##N##_##TA##_##TB##_##TFTYPE##_##DEVICE);
+#define BM_Matmul_Base(kind, M, K, N, TA, TB, T, DEVICE, NTH)                              \
+  static void BM_Matmul##_##kind##_##M##_##K##_##N##_##TA##_##TB##_##T##_##DEVICE##_##NTH( \
+      int iters) {                                                                         \
+    testing::UseRealTime();                                                                \
+    testing::ItemsProcessed(static_cast<int64>(iters) * M * K * N * 2);                    \
+    SessionOptions opts;                                                                   \
+    opts.config.set_intra_op_parallelism_threads(NTH);                                     \
+    test::Benchmark(#DEVICE, Matmul<T>(#kind, M, K, N, TA, TB), &opts).Run(iters);         \
+  }                                                                                        \
+  BENCHMARK(BM_Matmul##_##kind##_##M##_##K##_##N##_##TA##_##TB##_##T##_##DEVICE##_##NTH);  \
 
-#define BM_Matmul(M, K, N, TA, TB)                                       \
-  BM_MatmulDev(M, K, N, TA, TB, float, DT_FLOAT, cpu);                   \
-  // BM_MatmulDev(M, K, N, TA, TB, std::complex<float>, DT_COMPLEX64, cpu); \
-  // BM_MatmulDev(M, K, N, TA, TB, float, DT_FLOAT, gpu);                   \
-  // BM_MatmulDev(M, K, N, TA, TB, std::complex<float>, DT_COMPLEX64, gpu); \
-/* Uncomment to enable benchmarks for double/complex128: */              \
-// BM_MatmulDev(M, K, N, TA, TB, double, DT_DOUBLE, cpu);                   \
-// BM_MatmulDev(M, K, N, TA, TB, std::complex<double>, DT_COMPLEX128, cpu); \
-// BM_MatmulDev(M, K, N, TA, TB, double, DT_DOUBLE, gpu);                   \
-// BM_MatmulDev(M, K, N, TA, TB, std::complex<double>, DT_COMPLEX128, gpu);
+#define BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, NTH)    \
+  BM_Matmul_Base(eigen, M, K, N, TA, TB, T, DEVICE, NTH);  \
+  BM_Matmul_Base(Mkl, M, K, N, TA, TB, T, DEVICE, NTH);    \
 
-// Batch size of 1 included for inference.
-// Typical fully connected layers
-BM_Matmul(1, 512, 512, false, false);
-BM_Matmul(8, 512, 512, false, false);
-BM_Matmul(16, 512, 512, false, false);
-BM_Matmul(128, 256, 512, false, false);
-BM_Matmul(128, 256, 512, false, true);
-BM_Matmul(128, 256, 512, true, false);
-BM_Matmul(128, 256, 512, true, true);
+#define BM_Matmul_NTH(M, K, N, TA, TB, T, DEVICE) \
+  BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 1);  \
+  // BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 4);  \
+  // BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 8);  \
+  // BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 16); \
 
-// BM_Matmul(1, 1024, 1024, false, false);
-// BM_Matmul(8, 1024, 1024, false, false);
-// BM_Matmul(16, 1024, 1024, false, false);
-// BM_Matmul(128, 1024, 1024, false, false);
-// BM_Matmul(4096, 4096, 4096, false, false);
+#define BM_Matmul(M, K, N, TA, TB)                  \
+  BM_Matmul_NTH(M, K, N, TA, TB, float, cpu);       \
 
-// // Backward for fully connected layers
-// BM_Matmul(1, 1024, 1024, false, true);
-// BM_Matmul(8, 1024, 1024, false, true);
-// BM_Matmul(16, 1024, 1024, false, true);
-// BM_Matmul(128, 1024, 1024, false, true);
+BM_Matmul(204800, 200, 128, false, false);
+BM_Matmul(204800, 200, 128, false, true);
+BM_Matmul(204800, 200, 128, true, false);
+BM_Matmul(204800, 200, 128, true, true);
+//BM_Matmul(5, 8192, 4096, false, false);
+//BM_Matmul(1024, 696, 64, false, false);
+//BM_Matmul(1024, 184, 256, false, false);
+//BM_Matmul(1024, 184, 64, false, false);
+//BM_Matmul(204800, 200, 64, false, false);
+//BM_Matmul(71680, 420, 64, false, false);
+//BM_Matmul(51200, 356, 256, false, false);
+//BM_Matmul(51200, 232, 64, false, false);
+//BM_Matmul(20480, 260, 64, false, false);
+//BM_Matmul(5120, 210, 64, false, false);
+//BM_Matmul(204800, 200, 128, false, false);
+//BM_Matmul(71680, 420, 128, false, false);
+//BM_Matmul(51200, 356, 512, false, false);
+//BM_Matmul(51200, 232, 128, false, false);
+//BM_Matmul(20480, 260, 128, false, false);
+//BM_Matmul(5120, 210, 128, false, false);
 
-// // Forward softmax with large output size
-// BM_Matmul(1, 200, 10000, false, false);
-// BM_Matmul(8, 200, 10000, false, false);
-// BM_Matmul(20, 200, 10000, false, false);
-// BM_Matmul(20, 200, 20000, false, false);
 
-// // Backward softmax with large output size
-// BM_Matmul(1, 10000, 200, false, true);
-// BM_Matmul(1, 10000, 200, false, false);
-// BM_Matmul(8, 10000, 200, false, true);
-// BM_Matmul(20, 10000, 200, false, true);
-// BM_Matmul(20, 20000, 200, false, true);
-
-// // Test some matrix-vector multiplies.
-// BM_Matmul(50, 50, 1, false, false);
-// BM_Matmul(50, 50, 1, true, false);
-// BM_Matmul(50, 50, 1, false, true);
-// BM_Matmul(50, 50, 1, true, true);
-// BM_Matmul(500, 500, 1, false, false);
-// BM_Matmul(500, 500, 1, true, false);
-// BM_Matmul(500, 500, 1, false, true);
-// BM_Matmul(500, 500, 1, true, true);
-// BM_Matmul(2000, 2000, 1, false, false);
-// BM_Matmul(2000, 2000, 1, true, false);
-// BM_Matmul(2000, 2000, 1, false, true);
-// BM_Matmul(2000, 2000, 1, true, true);
-
-// // Test some vector-matrix multiplies.
-// BM_Matmul(1, 50, 50, false, false);
-// BM_Matmul(1, 50, 50, true, false);
-// BM_Matmul(1, 50, 50, false, true);
-// BM_Matmul(1, 50, 50, true, true);
-// BM_Matmul(1, 500, 500, false, false);
-// BM_Matmul(1, 500, 500, true, false);
-// BM_Matmul(1, 500, 500, false, true);
-// BM_Matmul(1, 500, 500, true, true);
-// BM_Matmul(1, 2000, 2000, false, false);
-// BM_Matmul(1, 2000, 2000, true, false);
-// BM_Matmul(1, 2000, 2000, false, true);
-// BM_Matmul(1, 2000, 2000, true, true);
-
-// // Test some rank-one products.
-// BM_Matmul(50, 1, 50, false, false);
-// BM_Matmul(50, 1, 50, true, false);
-// BM_Matmul(50, 1, 50, false, true);
-// BM_Matmul(50, 1, 50, true, true);
-// BM_Matmul(500, 1, 500, false, false);
-// BM_Matmul(500, 1, 500, true, false);
-// BM_Matmul(500, 1, 500, false, true);
-// BM_Matmul(500, 1, 500, true, true);
-// BM_Matmul(2000, 1, 2000, false, false);
-// BM_Matmul(2000, 1, 2000, true, false);
-// BM_Matmul(2000, 1, 2000, false, true);
-// BM_Matmul(2000, 1, 2000, true, true);
-
-}  // end namespace tensorflow
+} // end namespace tensorflow

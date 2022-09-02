@@ -1095,6 +1095,11 @@ private:
 
   void prepare_bk(int k, std::vector<int> &bk_list)
   {
+#ifdef USE_LIBXSMM
+    bk_list.push_back(64);
+    bk_list.push_back(48);
+    bk_list.push_back(32);
+#else
     // bk = 64, ...
     //int candidates[] = { 64, 96, 128, 160, 192, 224, 256, 384, 512 };
     int candidates[] = {64, 128, 256, 512};
@@ -1132,6 +1137,7 @@ private:
     {
       bk_list.push_back(k);
     }
+#endif
   }
 
   // Get the split according to position
