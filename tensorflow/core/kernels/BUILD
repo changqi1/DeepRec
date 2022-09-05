@@ -3039,7 +3039,7 @@ tf_kernel_library(
     hdrs = ["matmul_op.h"],
     # Override EIGEN_STRONG_INLINE to inline when --define=override_eigen_strong_inline=true,
     # to avoid long compiling time. See https://github.com/tensorflow/tensorflow/issues/10521
-    copts = if_override_eigen_strong_inline(["/DEIGEN_STRONG_INLINE=inline"]),
+    copts = if_override_eigen_strong_inline(["/DEIGEN_STRONG_INLINE=inline"]) + ["-std=c++14"],
     defines = select({
         ":xsmm": [
             "TENSORFLOW_USE_LIBXSMM",

@@ -88,7 +88,7 @@ class CommonTestUtilities : public OpsTestBase {
 
     ASSERT_EQ(output.dtype(), mkl_output.dtype());
     ASSERT_EQ(output.shape(), mkl_output.shape());
-    test::ExpectClose(output, mkl_output, 1.5e-5, 1.0e-3);
+    test::ExpectClose(output, mkl_output, 1.5e-5, 1.0e-4);
   }
 
  private:
@@ -211,26 +211,40 @@ static Graph* Matmul(const string& kind, int m, int k, int n, bool transpose_a, 
   BM_Matmul_Base(Mkl, M, K, N, TA, TB, T, DEVICE, NTH);    \
 
 #define BM_Matmul_NTH(M, K, N, TA, TB, T, DEVICE) \
-  BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 1);  \
-  // BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 4);  \
-  // BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 8);  \
-  // BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 16); \
+  BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 8);  \
+ //  BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 4);  \
+ //  BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 8);  \
+ //  BM_Matmul_kind(M, K, N, TA, TB, T, DEVICE, 16); \
 
 #define BM_Matmul(M, K, N, TA, TB)                  \
   BM_Matmul_NTH(M, K, N, TA, TB, float, cpu);       \
 
-BM_Matmul(204800, 200, 128, false, false);
-BM_Matmul(204800, 200, 128, false, true);
-BM_Matmul(204800, 200, 128, true, false);
-BM_Matmul(204800, 200, 128, true, true);
+// WDL matmul size:
+//BM_Matmul(512, 512, 256, false, false);
+//BM_Matmul(512, 512, 256, true, false);
+//BM_Matmul(512, 256, 512, false, true);
+//BM_Matmul(512, 1024, 512, false, false);
+//BM_Matmul(1024, 512, 512, true, false);
+//BM_Matmul(512, 512, 1024, false, true);
+//BM_Matmul(512, 2198, 1024, false, false);
+//BM_Matmul(2198, 512, 1024, true, false);
+//BM_Matmul(512, 1024, 2198, false, true);
+//BM_Matmul(512, 256, 1, false, false);
+//BM_Matmul(256, 512, 1, true, false);
+//BM_Matmul(512, 1, 256, false, true);
+//BM_Matmul(512, 1, 1, false, false);
+//BM_Matmul(1, 512, 1, true, false);
+
+// Alisearch matmul size:
 //BM_Matmul(5, 8192, 4096, false, false);
-//BM_Matmul(1024, 696, 64, false, false);
-//BM_Matmul(1024, 184, 256, false, false);
-//BM_Matmul(1024, 184, 64, false, false);
-//BM_Matmul(204800, 200, 64, false, false);
+BM_Matmul(1024, 696, 64, false, false); //6696
+BM_Matmul(1024, 184, 256, false, false);
+BM_Matmul(1024, 184, 64, false, false);
+BM_Matmul(204800, 200, 64, false, false);
 //BM_Matmul(71680, 420, 64, false, false);
-//BM_Matmul(51200, 356, 256, false, false);
+//BM_Matmul(51200, 356, 256, false, false); //2356
 //BM_Matmul(51200, 232, 64, false, false);
+//BM_Matmul(51200, 128, 128, false, false);
 //BM_Matmul(20480, 260, 64, false, false);
 //BM_Matmul(5120, 210, 64, false, false);
 //BM_Matmul(204800, 200, 128, false, false);
@@ -239,6 +253,15 @@ BM_Matmul(204800, 200, 128, true, true);
 //BM_Matmul(51200, 232, 128, false, false);
 //BM_Matmul(20480, 260, 128, false, false);
 //BM_Matmul(5120, 210, 128, false, false);
+BM_Matmul(696, 1024, 64, true, false);
+BM_Matmul(184, 1024, 256, true, false);
+BM_Matmul(184, 1024, 64, true, false);
+BM_Matmul(200, 204800, 64, true, false);
+
+BM_Matmul(1024, 64, 696, false, true);
+BM_Matmul(1024, 256, 184, false, true);
+BM_Matmul(1024, 64, 184, false, true);
+BM_Matmul(204800, 64, 200, false, false);
 
 
 } // end namespace tensorflow

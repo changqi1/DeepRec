@@ -14,6 +14,8 @@
 
 #include "tensorflow/core/lib/core/threadpool.h"
 
+#include <mutex>
+std::mutex mMutex;
 
 namespace tensorflow {
 namespace thread {
@@ -161,6 +163,7 @@ struct MatmulConfig
     }
 
 static T* transpose(const T *src, T *dst, int src_stride, int src_length, int src_ld, int dst_ld) {
+//  int ret = libxsmm_trans(dst, src, src_stride, src_length, src_ld, dst_ld);
   for(int i = 0; i < src_length; i++){
     for(int j = 0; j < src_stride; j++){
       dst[j * dst_ld + i] = src[i * src_ld + j];
@@ -684,6 +687,8 @@ public:
 
   void host_tune(bool flush_b, const T * a, const T * b, T * c)
   {
+    std::lock_guard<std::mutex> lk(mMutex);
+
     ShowLog("start of   void host_tune(bool flush_b, const T * a, const T * b, T * c)");
     total_cycle_++;
     total_per_cycle_ = 0;
@@ -697,7 +702,8 @@ public:
 
     std::string handle_name = "host_test-" + std::to_string(mmsize.m)
                               + "-" + std::to_string(mmsize.n)
-                              + "-" + std::to_string(mmsize.k);
+                              + "-" + std::to_string(mmsize.k)
+			      + "-" + std::to_string(mmsize.ta) + std::to_string(mmsize.tb);
     auto proxy_handle = GetHandleByName(handle_name);
     auto my_host_proxy = HostOSTProxyManager::Instance().GetProxy(proxy_handle);
 
@@ -749,6 +755,11 @@ public:
         // std::cout << "impl_id = " << impl_id << std::endl;
 
         // Verify the parameters
+#ifdef USE_LIBXSMM
+	// libxsmm with noblas (mnk)^1/3 <= 64
+	if (mmsize.bm * mmsize.bn * mmsize.bk > 64*64*64)
+            return std::numeric_limits<float>::max();
+#endif
         for(auto _item : this->space){
           if(_item.verify_func == nullptr) continue;
 
@@ -1095,11 +1106,6 @@ private:
 
   void prepare_bk(int k, std::vector<int> &bk_list)
   {
-#ifdef USE_LIBXSMM
-    bk_list.push_back(64);
-    bk_list.push_back(48);
-    bk_list.push_back(32);
-#else
     // bk = 64, ...
     //int candidates[] = { 64, 96, 128, 160, 192, 224, 256, 384, 512 };
     int candidates[] = {64, 128, 256, 512};
@@ -1137,7 +1143,6 @@ private:
     {
       bk_list.push_back(k);
     }
-#endif
   }
 
   // Get the split according to position
@@ -1262,6 +1267,7 @@ private:
 
   void update_kernels(SmallKernels &kernels, int bm, int bn)
   {
+#ifndef USE_LIBXSMM
     if (bm == 32)
     {
         SET_KERNELS_ENUM_BN(32)
@@ -1385,6 +1391,7 @@ private:
 
     kernels.kernel_nofix_acc = small_gemm_nofix<true>;
     kernels.kernel_nofix_nonacc = small_gemm_nofix<false>;
+#endif
   }
 
   PerfStat benchmark(INNER_MATMUL_FUNC func, const MatmulSize &mmsize,

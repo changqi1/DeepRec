@@ -162,11 +162,13 @@ class MklMatMulOp : public OpKernel {
     auto b_ptr = (b.template flat<T>().data());
     auto c_ptr = (out->template flat<T>().data());
 
-    if(tune_ && std::is_same<T, float>::value && m > 64 && n > 64 && k > 64){
+    if(tune_ && std::is_same<T, float>::value && m >= 64 && n >= 64 && k >= 64) {
+//    	std::cout << " tune mnk " << m << " " << n << " " << k << " transab " << transpose_a << transpose_b << " float  " << std::is_same<T, float>::value << std::endl; 
     	tmm_->SetThreadPool(&ctx->template eigen_device<Device>());
 	TuningGemm(ctx, transpose_a, transpose_b, m, n, k, a_ptr,
                   transpose_a ? m : k, b_ptr, transpose_b ? k : n, c_ptr, n);
     } else {
+//    	std::cout << " mkl mnk " << m << " " << n << " " << k << " transab " << transpose_a << transpose_b << " float  " << std::is_same<T, float>::value << std::endl; 
     	MklBlasGemm(transpose_a, transpose_b, m, n, k, a_ptr, transpose_a ? m : k,
                 b_ptr, transpose_b ? k : n, c_ptr, n);
     }
