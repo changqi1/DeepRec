@@ -163,7 +163,6 @@ gpus=$(cat $config_file | shyaml get-value gpu_sets)
 # image name
 deeprec_test_image=$(cat $config_file | shyaml get-value deeprec_test_image)
 tf_test_image=$(cat $config_file | shyaml get-value tf_test_image)
-echo "deeprec_test_image:$deeprec_test_image"
 
 # environment variables
 env_var=$(cat $config_file | shyaml get-values env_var)

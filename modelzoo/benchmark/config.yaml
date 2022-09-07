@@ -32,7 +32,7 @@ model_batchsize:
   
 #args for deeprec
 #like --emb_fusion true
-modelArgs: 
+modelArgs:
 
 #tf on/off
 stocktf: on
