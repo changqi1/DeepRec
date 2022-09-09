@@ -2095,14 +2095,14 @@ Status Remapper::Optimize(Cluster* cluster, const GrapplerItem& item,
           continue;
         }
 
-        // Remap Conv2D+BiasAdd+Add into the _FusedConv2D.
-        if (FindContractionWithBiasAddAndAdd(ctx, i,
-                                             &contract_with_bias_and_add)) {
-          TF_RETURN_IF_ERROR(
-              AddFusedContractionNode(&ctx, contract_with_bias_and_add,
-                                      &invalidated_nodes, &nodes_to_delete));
-          continue;
-        }
+        // // Remap Conv2D+BiasAdd+Add into the _FusedConv2D.
+        // if (FindContractionWithBiasAddAndAdd(ctx, i,
+        //                                      &contract_with_bias_and_add)) {
+        //   TF_RETURN_IF_ERROR(
+        //       AddFusedContractionNode(&ctx, contract_with_bias_and_add,
+        //                               &invalidated_nodes, &nodes_to_delete));
+        //   continue;
+        // }
 
         // Remap BatchMatMul+Mul into the _FusedBatchMatMul.
         if (FindContractionWithMul(ctx, i, &contract_with_mul)) {
@@ -2111,22 +2111,22 @@ Status Remapper::Optimize(Cluster* cluster, const GrapplerItem& item,
           continue;
         }
 
-        // MatMul + BiasAdd + Gelu fusion
-        std::map<string, int> node_label_to_index;
-        if (FindMatMulWithBiasAndAGelu(&ctx, i, &node_label_to_index,
-                                       &nodes_to_delete, true)) {
-          TF_RETURN_IF_ERROR(AddFusedMatMulWithBiasAndGelu(
-              &ctx, node_label_to_index, &invalidated_nodes, true));
-          continue;
-        };
+        // // MatMul + BiasAdd + Gelu fusion
+        // std::map<string, int> node_label_to_index;
+        // if (FindMatMulWithBiasAndAGelu(&ctx, i, &node_label_to_index,
+        //                                &nodes_to_delete, true)) {
+        //   TF_RETURN_IF_ERROR(AddFusedMatMulWithBiasAndGelu(
+        //       &ctx, node_label_to_index, &invalidated_nodes, true));
+        //   continue;
+        // };
 
-        // MatMul + BiasAdd + Gelu_erf fusion
-        if (FindMatMulWithBiasAndAGelu(&ctx, i, &node_label_to_index,
-                                       &nodes_to_delete, false)) {
-          TF_RETURN_IF_ERROR(AddFusedMatMulWithBiasAndGelu(
-              &ctx, node_label_to_index, &invalidated_nodes, false));
-          continue;
-        };
+        // // MatMul + BiasAdd + Gelu_erf fusion
+        // if (FindMatMulWithBiasAndAGelu(&ctx, i, &node_label_to_index,
+        //                                &nodes_to_delete, false)) {
+        //   TF_RETURN_IF_ERROR(AddFusedMatMulWithBiasAndGelu(
+        //       &ctx, node_label_to_index, &invalidated_nodes, false));
+        //   continue;
+        // };
       }
     }
 #endif  //! INTEL_MKL
