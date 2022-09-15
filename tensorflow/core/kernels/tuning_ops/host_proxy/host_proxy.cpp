@@ -42,11 +42,12 @@ Vector_Float SuiteWrapperEvaluate(Suite *self, int *x) {
     SuiteWrapper *wrapper = (SuiteWrapper *)self;
     auto cust_func = wrapper->proxy->GetEvaluateFunc();
     auto size = wrapper->proxy->GetParamsNums();
+    auto name = wrapper->proxy->GetName();
     std::vector<int> cur_params;
     for (int i = 0; i < size; i++) {
         cur_params.push_back(x[i]);
     }
-    const float curiter_avg_latency = cust_func(cur_params);
+    const float curiter_avg_latency = cust_func(name,cur_params);
     float latency = (-1.0) * curiter_avg_latency;
     if (Vector_Float_Size(self->fitness) > 0) {
         *Vector_Float_Visit(self->fitness, 0)->m_val = latency;
@@ -86,7 +87,7 @@ void HostProxy::SetAlgorithm(const char *algo,int gens,int pops) {
         mAlgo = BO;
     } else {
         std::string msg = "There is no algorithm named " + (std::string)algo + " in host";
-        // throw std::runtime_error(msg);
+        throw std::runtime_error(msg);
     }
     mIterManger.gens = gens;
     mIterManger.pops = pops;
@@ -115,6 +116,10 @@ int HostProxy::GetParamsNums() {
     return mTuneParams.size();
 }
 
+std::string HostProxy::GetName() {
+    return mName;
+}
+
 float HostProxy::GetBestCost() {
     return -mBestFitness;
 }
@@ -136,7 +141,7 @@ void HostProxy::Regist() {
     SuiteWrapper *suite_wrapper = (SuiteWrapper *)malloc(sizeof(SuiteWrapper));
     if (suite_wrapper == nullptr) {
         std::string msg = "Cannot allocate memory for proxy: " + mName;
-        // throw std::runtime_error(msg);
+        throw std::runtime_error(msg);
     }
     Suite_Ctor(&(suite_wrapper->base));
     suite_wrapper->proxy = this;
@@ -276,7 +281,7 @@ bool HostProxy::Start() {
 
 bool HostProxy::Stop() {
     if (mState == State::STOPPED) {
-        // std::cout << "Tune has over" << std::endl;
+        std::cout << "Tune has over" << std::endl;
         return true;
     }
     mStopRequest = true;

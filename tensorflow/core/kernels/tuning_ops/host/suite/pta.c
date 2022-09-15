@@ -14,25 +14,32 @@
 // stated in the License.
 //
 
-#ifndef INDIVIDUAL_H
-#define INDIVIDUAL_H
-
-#include "VectorFloat.h"
-#include "MapStringToPtr.h"
+#include "Suite.h"
 #include "OptimizerIF.h"
 
-typedef struct _Individual {
-  Map_StringToPtr m_mapPopParam;
-  Vector_Float m_fitness;
-  char * m_valueStr;
-} Individual;
+int main(int argc, char *argv[]) {
+  int res = 0;
+  Suite *p_suite = nullptr;
 
-Individual *Individual_Ctor(void);
-Individual *Individual_Copy_Ctor(Individual *param);
-void Individual_Copy(Individual *dst, Individual *src);
-void Individual_Dtor(Individual *self);
-void Individual_Assign(Individual *self, Individual *src);
-bool_t Individual_IsSame(Individual *self, Map_StringToString p);
-void Individual_Print(Individual *self);
+  do {
+    res = checkHelp(argc, argv);
+    if (res != 0) {
+      break;
+    }
 
-#endif
+    res = getSuite(argc, argv, &p_suite);
+    if (res < 0) {
+      PRINTF("Fail to get suite.\n");
+      break;
+    }
+
+    res = tune(argc, argv, p_suite);
+    if (res < 0) {
+      PRINTF("Fail to tune!\n");
+      break;
+    }
+  } while (false_t);
+
+  freeSuite(p_suite);
+  return 0;
+}

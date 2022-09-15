@@ -733,7 +733,7 @@ public:
       };
 
       auto bm_compare = [flush_b, &best, this,
-                        &mmsize, &kernels](std::vector<int> const &params)
+                        &mmsize, &kernels](std::string const &name, std::vector<int> const &params)
       {
         // Set params
         mmsize.bm = this->space[B_G_M].min_max_value[2 * params[B_G_M]];

@@ -3,7 +3,7 @@
 PROXY_HANDLE HostOSTProxyManager::CreateNewProxy(const char *name) {
     if (name == nullptr) {
         std::string msg = "A name must be specified!";
-        // throw std::runtime_error(msg);
+        throw std::runtime_error(msg);
     }
 
     auto proxy = std::make_shared<HostProxy>(name);
