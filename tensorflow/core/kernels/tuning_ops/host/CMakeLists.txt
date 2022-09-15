@@ -9,6 +9,4 @@ include_directories(suite/NetworkAI)
 link_directories(.)
 link_libraries(pta)
 
-add_executable(pta_launcher suite/pta.c)
-target_link_libraries(pta_launcher m libpta.so)
 

@@ -254,14 +254,14 @@ BM_Matmul(204800, 200, 64, false, false);
 //BM_Matmul(20480, 260, 128, false, false);
 //BM_Matmul(5120, 210, 128, false, false);
 BM_Matmul(696, 1024, 64, true, false);
-BM_Matmul(184, 1024, 256, true, false);
-BM_Matmul(184, 1024, 64, true, false);
-BM_Matmul(200, 204800, 64, true, false);
-
-BM_Matmul(1024, 64, 696, false, true);
-BM_Matmul(1024, 256, 184, false, true);
-BM_Matmul(1024, 64, 184, false, true);
-BM_Matmul(204800, 64, 200, false, false);
+// BM_Matmul(184, 1024, 256, true, false);
+// BM_Matmul(184, 1024, 64, true, false);
+// BM_Matmul(200, 204800, 64, true, false);
+// 
+// BM_Matmul(1024, 64, 696, false, true);
+// BM_Matmul(1024, 256, 184, false, true);
+// BM_Matmul(1024, 64, 184, false, true);
+// BM_Matmul(204800, 64, 200, false, false);
 
 
 } // end namespace tensorflow

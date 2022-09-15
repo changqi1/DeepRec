@@ -45,7 +45,7 @@ class HostProxy {
         STOPPED = 3         /**< Tuning completed */
     };
 
-    typedef std::function<const float(std::vector<int> const &param)> EvaluateFunc;
+    typedef std::function<const float(std::string const &name,std::vector<int> const &param)> EvaluateFunc;
     typedef std::function<const bool(TuningContext &context)> ConditionFunc;
     HostProxy(const char *name);
     virtual ~HostProxy();
@@ -65,7 +65,7 @@ class HostProxy {
     void SetAlgorithm(const char *algo,int gens,int pops);
     void SetConditionFunc(ConditionFunc condition);
     ConditionFunc &GetConditionFunc();
-
+    std::string GetName();
     void UpdateTuneIndexs();
     void PushCurTunedResult(std::map<std::string, int> &tmpParams, float &tmpFitness);
     void PushBestTunedResult();
@@ -103,7 +103,6 @@ class HostProxy {
     std::mutex mMutex;
     std::atomic<bool> mStopRequest{false};
     IterManger mIterManger;
-
     void *mSuiteBase = nullptr;
     void *mOptimizerIF = nullptr;
     void *mParamsMapStringToString = nullptr;
