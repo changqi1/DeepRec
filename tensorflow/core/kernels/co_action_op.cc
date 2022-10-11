@@ -103,7 +103,6 @@ struct LaunchCoAction<CPUDevice, Scalar> {
       }
     }
 
-    ShowLog("CoActionOp:LaunchCoAction:start DNN");
     for (int64 batch = 0; batch < batch_b; batch++) {
       for (int64 p = 0; p < paralle_num; p++) {
         for (int64 pow = 0; pow < pow_num; pow++) {
@@ -115,7 +114,6 @@ struct LaunchCoAction<CPUDevice, Scalar> {
         }
       }
     }
-    ShowLog("CoActionOp:LaunchCoAction:start DNN");
 
     return Status::OK();
   }
@@ -126,6 +124,12 @@ struct LaunchCoAction<CPUDevice, Scalar> {
 //----------------------------------------------------------------------------//
 #define INDEX(x, y, ld) ((x) * (ld) + (y))
 #define ADDRESS(p, x, y, ld) ((p) + (x) * (ld) + (y))
+
+#define ADDRESS_A(a, pn, iter_m, iter_k) ((a) + (pn) * m * k + (iter_m) * k + iter_k)
+#define ADDRESS_B(b, bs, pn, iter_k, iter_n) ((b) + (bs) * paralle_num * k * n + (pn) * k * n + (iter_k) * n + (iter_n))
+#define ADDRESS_C(c, bs, pn, p, iter_n) ((c) + (((bs) * paralle_num + (pn)) * pow_num + (p)) * n + (iter_n))
+
+#define _tmp_b_ptr (b_ptr + (batch * paralle_num + p) * k * n)
 
 inline __m512 avx512_exp(const __m512& _x) {
   __m512 p16f_1 = _mm512_set1_ps(1.0f);
@@ -301,9 +305,7 @@ struct LaunchOptCoAction<CPUDevice, Scalar> {
       for (int64 batch = 0; batch < batch_b; batch++) {
         for (int64 p = 0; p < paralle_num; p++) {
           // 1. init B _m512 vector
-          
           for(int iter = 0; iter < n; iter++){
-            #define _tmp_b_ptr (b_ptr + (batch * paralle_num + p) * k * n)
             // hard code here, cause of the k is fixed as 5.
             element_col[iter] = _mm512_set_ps(
               /* 15 */ 0,
@@ -390,6 +392,79 @@ struct LaunchOptCoAction<CPUDevice, Scalar> {
     return Status::OK();
   }
 };
+
+template <typename Scalar>
+struct LaunchOptCoActionV2<CPUDevice, Scalar> {
+  Status operator()(OpKernelContext* context, int64 m, int64 n, int64 k,
+                    const Tensor& in_a, const Tensor& in_b, Tensor* out,
+                    int64 batch_a, int64 batch_b, int64 paralle_num,
+                    int64 pow_num) {
+    auto a_ptr = in_a.template flat<Scalar>().data(); //{1, 1, 50/150, 5}
+    auto b_ptr = in_b.template flat<Scalar>().data(); //{8, 1, 50/150, 4}
+    auto c_ptr = out->template flat<Scalar>().data(); //{8, 1, 2, 4}
+#ifdef __AVX512F__
+  {
+    const __mmask16 row_mask =
+        (static_cast<std::uint32_t>(1) << 4) - 1;
+    const __mmask16 row4_mask =
+        ((static_cast<std::uint32_t>(1) << 4) - 1) << 4;
+    const __mmask16 row8_mask =
+        ((static_cast<std::uint32_t>(1) << 4) - 1) << 8;
+    const __mmask16 row12_mask =
+        ((static_cast<std::uint32_t>(1) << 4) - 1) << 12;
+
+    __m512 va, vb, vc, vc2, v_rtn, v_rtn2;
+    __m512 v_zero = _mm512_setzero_ps();
+    
+    ShowLog("LaunchOptCoActionV2:before for");
+    for (int64 batch = 0; batch < batch_b; batch+=4) {
+      for (int64 p = 0; p < paralle_num; p++) {
+        v_rtn = v_zero;
+        v_rtn2 = v_zero;
+        for(int64 iter_m = 0; iter_m < m; iter_m++) {
+          vc = v_zero;
+          vc2 = v_zero;
+          for(int64 iter_k = 0; iter_k < k; iter_k++) {
+            // va=broadcasts(a_ptr[m,k]), vb=b_ptr[k, 0~n] * 4 * batchSize
+            va = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS_A(a_ptr, p, iter_m, iter_k)));
+            // todo(marvin):  Do we have a better way to load vb?
+            vb = _mm512_set_ps(
+              *ADDRESS_B(b_ptr, batch + 3, p, iter_k, 3), *ADDRESS_B(b_ptr, batch + 3, p, iter_k, 2),
+              *ADDRESS_B(b_ptr, batch + 3, p, iter_k, 1), *ADDRESS_B(b_ptr, batch + 3, p, iter_k, 0),
+              *ADDRESS_B(b_ptr, batch + 2, p, iter_k, 3), *ADDRESS_B(b_ptr, batch + 2, p, iter_k, 2),
+              *ADDRESS_B(b_ptr, batch + 2, p, iter_k, 1), *ADDRESS_B(b_ptr, batch + 2, p, iter_k, 0),
+              *ADDRESS_B(b_ptr, batch + 1, p, iter_k, 3), *ADDRESS_B(b_ptr, batch + 1, p, iter_k, 2),
+              *ADDRESS_B(b_ptr, batch + 1, p, iter_k, 1), *ADDRESS_B(b_ptr, batch + 1, p, iter_k, 0),
+              *ADDRESS_B(b_ptr, batch + 0, p, iter_k, 3), *ADDRESS_B(b_ptr, batch + 0, p, iter_k, 2),
+              *ADDRESS_B(b_ptr, batch + 0, p, iter_k, 1), *ADDRESS_B(b_ptr, batch + 0, p, iter_k, 0)
+            );
+            vc = _mm512_fmadd_ps(va, vb, vc);
+            vc2 = _mm512_fmadd_ps(_mm512_mul_ps(va, va), vb, vc2);
+          }
+          v_rtn = _mm512_add_ps(v_rtn, avx512_tanh(vc));
+          v_rtn2 = _mm512_add_ps(v_rtn2, avx512_tanh(vc2));
+        }
+
+        // store 4*2 elements
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 0, p, 0, 0),   row_mask,  v_rtn);
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 1, p, 0, 0),  row4_mask,  v_rtn);
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 2, p, 0, 0),  row8_mask,  v_rtn);
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 3, p, 0, 0), row12_mask,  v_rtn);
+        
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 0, p, 1, 0),   row_mask, v_rtn2);
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 1, p, 1, 0),  row4_mask, v_rtn2);
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 2, p, 1, 0),  row8_mask, v_rtn2);
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 3, p, 1, 0), row12_mask, v_rtn2);
+        
+      }
+    }
+    ShowLog("LaunchOptCoActionV2:end for");
+  }
+#endif
+    return Status::OK();
+  }
+};
+//----------------------------------------------------------------------------//
 
 template <typename Scalar, typename TIndex>
 struct LaunchCoActionIndicator<CPUDevice, Scalar, TIndex> {
@@ -512,7 +587,7 @@ class CoActionOp : public OpKernel {
                 << ", " << b.shape().DebugString();
     }
 
-    OP_REQUIRES_OK(ctx, enable_opt ? LaunchOptCoAction<Device, Scalar>()(ctx, d0, d3, d1, a, b,
+    OP_REQUIRES_OK(ctx, enable_opt ? LaunchOptCoActionV2<Device, Scalar>()(ctx, d0, d3, d1, a, b,
                                                          out, batch_a, batch_b,
                                                          parallel_a, pow_num)
                                     :LaunchCoAction<Device, Scalar>()(ctx, d0, d3, d1, a, b,
