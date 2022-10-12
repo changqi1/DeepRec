@@ -3,6 +3,7 @@
 default_opts="--remote_cache=http://crt-e302.sh.intel.com:9092 \
              --config=opt \
              --copt=-O2 \
+             --copt=-DNDEBUG \
              --copt=-Wformat \
              --copt=-Wformat-security \
              --copt=-fstack-protector \
@@ -20,6 +21,7 @@ default_opts="--remote_cache=http://crt-e302.sh.intel.com:9092 \
 
 test_opts="--nocache_test_results \
            --test_output=all \
+           --test_env=TF_CO_ACTION_OPT=true \
            --verbose_failures \
            --test_verbose_timeout_warnings \
            --flaky_test_attempts 1 \
@@ -28,34 +30,38 @@ test_opts="--nocache_test_results \
            -c opt \
            --keep_going"
 
-test_targets="//tensorflow/core/kernels:mkl_aggregate_ops_test \
-              //tensorflow/core/kernels:mkl_batch_matmul_op_test \
-              //tensorflow/core/kernels:mkl_concat_op_test \
-              //tensorflow/core/kernels:mkl_cwise_ops_test \
-              //tensorflow/core/kernels:mkl_fused_batch_norm_op_test \
-              //tensorflow/core/kernels:mkl_identity_op_test \
-              //tensorflow/core/kernels:mkl_lrn_op_test \
-              //tensorflow/core/kernels:mkl_matmul_op_test \
-              //tensorflow/core/kernels:mkl_relu_op_test \
-              //tensorflow/core/kernels:mkl_reshape_op_test \
-              //tensorflow/core/kernels:mkl_slice_op_test \
-              //tensorflow/core/kernels:mkl_softmax_op_test \
-              //tensorflow/core/kernels:mkl_transpose_op_test"
+# default_opts="--remote_cache=http://crt-e302.sh.intel.com:9092 \
+#              --config=opt \
+#              --copt=-O0 \
+#              --copt=-DNDEBUG \
+#              --copt=-Wformat \
+#              --copt=-Wformat-security \
+#              --copt=-fstack-protector \
+#              --copt=-fPIC \
+#              --copt=-fpic \
+#              --linkopt=-znoexecstack \
+#              --linkopt=-zrelro \
+#              --linkopt=-znow \
+#              --linkopt=-fstack-protector"
 
-BM_targets="//tensorflow/core/kernels:mkl_aggregate_ops_test \
-            //tensorflow/core/kernels:mkl_batch_matmul_op_test \
-            //tensorflow/core/kernels:mkl_concat_op_test \
-            //tensorflow/core/kernels:mkl_cwise_ops_test \
-            //tensorflow/core/kernels:mkl_fused_batch_norm_op_test \
-            //tensorflow/core/kernels:mkl_identity_op_test \
-            //tensorflow/core/kernels:mkl_lrn_op_test \
-            //tensorflow/core/kernels:mkl_matmul_op_test \
-            //tensorflow/core/kernels:mkl_matmul_op_test \
-            //tensorflow/core/kernels:mkl_relu_op_test \
-            //tensorflow/core/kernels:mkl_reshape_op_test \
-            //tensorflow/core/kernels:mkl_slice_op_test \
-            //tensorflow/core/kernels:mkl_softmax_op_test \
-            //tensorflow/core/kernels:mkl_transpose_op_test"
+# # mkl_opts="--config=mkl \
+# #            --define build_with_mkl_dnn_v1_only=true \
+# #            --copt=-DENABLE_INTEL_MKL_BFLOAT16 \
+# #            --copt=-march=skylake-avx512"
+
+# test_opts="--nocache_test_results \
+#            --test_output=all \
+#            --test_env=TF_CPP_MIN_VLOG_LEVEL=1 \
+#            --verbose_failures \
+#            --test_verbose_timeout_warnings \
+#            --flaky_test_attempts 1 \
+#            --test_timeout 99999999 \
+#            --test_size_filters=small,medium,large,enormous \
+#            -c dbg \
+#            --keep_going"
+
+test_targets="//tensorflow/core/kernels:co_action_op_test"
+BM_targets="//tensorflow/core/kernels:co_action_op_test"
 
 function get_target_name() {
   echo $1 | awk -F ':' '{print $2}'
@@ -85,7 +91,7 @@ function cpu_bazel_test_BM() {
     target_name=$(get_target_name $test_target)
     bazel test ${default_opts} ${mkl_opts} \
       ${test_opts} ${test_options} \
-      -- ${test_target} > $target_name.log 2>&1
+      -- ${test_target} 
   done
 }
 

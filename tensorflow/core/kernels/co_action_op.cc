@@ -122,14 +122,26 @@ struct LaunchCoAction<CPUDevice, Scalar> {
 //----------------------------------------------------------------------------//
 // Optimize code are below.                                                   //
 //----------------------------------------------------------------------------//
-#define INDEX(x, y, ld) ((x) * (ld) + (y))
-#define ADDRESS(p, x, y, ld) ((p) + (x) * (ld) + (y))
+#define ADDRESS_A(a_ptr, pn, m, k) \
+  ((a_ptr) + (pn) * M_SIZE * K_SIZE + (m) * K_SIZE + (k))
 
-#define ADDRESS_A(a, pn, iter_m, iter_k) ((a) + (pn) * m * k + (iter_m) * k + iter_k)
-#define ADDRESS_B(b, bs, pn, iter_k, iter_n) ((b) + (bs) * paralle_num * k * n + (pn) * k * n + (iter_k) * n + (iter_n))
-#define ADDRESS_C(c, bs, pn, p, iter_n) ((c) + (((bs) * paralle_num + (pn)) * pow_num + (p)) * n + (iter_n))
+#define ADDRESS_A_IND(a_ptr, ind, pn, m, k) \
+  ((a_ptr) + ((ind) * paralle_num + (pn)) * M_SIZE * K_SIZE + (m) * K_SIZE + (k))
 
-#define _tmp_b_ptr (b_ptr + (batch * paralle_num + p) * k * n)
+#define ADDRESS_B(b_ptr, bs, pn, k, n) \
+  ((b_ptr) + ((bs) * paralle_num + (pn))* K_SIZE * N_SIZE + (k) * N_SIZE + (n))
+
+#define ADDRESS_C(c_ptr, bs, pn, p, n) \
+  ((c_ptr) + (((bs) * paralle_num + (pn)) * POW_NUM + (p)) * N_SIZE + (n))
+
+
+#define FITTING_VA(i, mask)                                                                     \
+  {                                                                                             \
+    auto tmp_ind = (int64)indicator[batch + (i)];                                                      \
+    tmp_ind = -1 < tmp_ind < batch_a ? tmp_ind : 0;                                             \
+    __m512 tmp_va = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS_A_IND(a_ptr, tmp_ind, p, m, k))); \
+    va = _mm512_mask_blend_ps(row_mask_##mask, va, tmp_va);                                     \
+  }                                                                                             \
 
 inline __m512 avx512_exp(const __m512& _x) {
   __m512 p16f_1 = _mm512_set1_ps(1.0f);
@@ -194,249 +206,103 @@ inline __m512 avx512_tanh(__m512 x) {
   return x;
 }
 
-template <typename T>
-Status OptPowCPU(const CPUDevice& d, size_t m, size_t n, const T* in, T* out,
-              int64 pow_num) {
-  typename tensorflow::TTypes<const T>::Matrix in_matrix(in, m, n);
-  typename tensorflow::TTypes<T>::Matrix out_matrix(out, m, n);
-  out_matrix.device(d) = in_matrix.pow((T)pow_num);
-  return Status::OK();
-}
-
-template <typename T>
-Status OptCoActionCPU(const CPUDevice& d, size_t m, size_t n, size_t k, const T* a,
-                   const T* b, T* c) {
-  typename tensorflow::TTypes<const T>::Matrix a_matrix(a, m, k);
-  typename tensorflow::TTypes<const T>::Matrix b_matrix(b, k, n);
-  typename tensorflow::TTypes<T>::Matrix c_matrix(c, 1, n);
-  Eigen::array<Eigen::IndexPair<Eigen::DenseIndex>, 1> dim_pair;
-  dim_pair[0].first = 1;
-  dim_pair[0].second = 0;
-  Eigen::array<int, 1> reduce_dims({0});
-  c_matrix.device(d) =
-      a_matrix.contract(b_matrix, dim_pair).tanh().sum(reduce_dims);
-  return Status::OK();
-}
-
 template <typename Scalar>
 struct LaunchOptCoAction<CPUDevice, Scalar> {
-  Status operator()(OpKernelContext* context, int64 m, int64 n, int64 k,
-                    const Tensor& in_a, const Tensor& in_b, Tensor* out,
-                    int64 batch_a, int64 batch_b, int64 paralle_num,
-                    int64 pow_num) {
+  Status operator()(OpKernelContext* context, const int64 m, const int64 n, const int64 k,
+                  const Tensor& in_a, const Tensor& in_b, Tensor* out,
+                  const int64 batch_a, const int64 batch_b, const int64 paralle_num,
+                  const int64 pow_num) {
     auto a_ptr = in_a.template flat<Scalar>().data();
     auto b_ptr = in_b.template flat<Scalar>().data();
     auto c_ptr = out->template flat<Scalar>().data();
-    Tensor tmp_pow;
-    TF_RETURN_IF_ERROR(context->allocate_temp(
-        DataTypeToEnum<Scalar>::value,
-        TensorShape({batch_a, paralle_num, pow_num * m, k}), &tmp_pow));
-    auto tmp_pow_ptr = tmp_pow.template flat<Scalar>().data();
-    // power and concat
 #ifdef __AVX512F__
-    {
-      const int total_element = m * k;
-      const int total_loops = total_element / 16;
-      const int remain = total_element % 16;
-      const __mmask16 row_mask =
-          (static_cast<std::uint32_t>(1) << remain) - 1;
-
-      __m512 element_row;
-      for (int64 batch = 0; batch < batch_a; batch++) {
-        for (int64 p = 0; p < paralle_num; p++) {
-          int loop = 0;
-          for (; loop < total_loops; loop++){
-            element_row = _mm512_loadu_ps(a_ptr + (batch * paralle_num + p) * m * k + 16 * loop);
-            _mm512_storeu_ps( // pow(1)
-              tmp_pow_ptr + (batch * paralle_num + p) * pow_num * m * k + 16 * loop, element_row);
-            _mm512_storeu_ps( // pow(2)
-              tmp_pow_ptr + (batch * paralle_num + p) * pow_num * m * k + m * k + 16 * loop,
-              _mm512_mul_ps(element_row, element_row));
-          }
-          if (remain){
-            element_row = _mm512_maskz_loadu_ps(row_mask, a_ptr + (batch * paralle_num + p) * m * k + 16 * loop);
-            _mm512_mask_storeu_ps( // pow(1)
-              tmp_pow_ptr + (batch * paralle_num + p) * pow_num * m * k + 16 * loop, row_mask, element_row);
-            _mm512_mask_storeu_ps( // pow(2)
-              tmp_pow_ptr + (batch * paralle_num + p) * pow_num * m * k + m * k + 16 * loop, row_mask,
-              _mm512_mul_ps(element_row, element_row));
-          }
-        }
-      }
-    }
-#else
-    for (int64 batch = 0; batch < batch_a; batch++) {
-      for (int64 p = 0; p < paralle_num; p++) {
-        for (int64 pow = 0; pow < pow_num; pow++) {
-          TF_RETURN_IF_ERROR(OptPowCPU<Scalar>(
-              context->eigen_device<CPUDevice>(), m, k,
-              a_ptr + (batch * paralle_num + p) * m * k,
-              tmp_pow_ptr + (batch * paralle_num + p) * pow_num * m * k +
-                  pow * m * k,
-              pow + 1));
-        }
-      }
-    }
-#endif
-
-    // MatMul + tanh + sum parts
-#ifdef __AVX512F__
-    {
-      ShowLog("OptCoActionOp:LaunchCoAction:start DNN");
-
-      float* temp_c = new float[m];
-      float* temp_b = new float[k];
-      const int total_element = m;
-      const int total_loops = total_element / 3;
-      const int remain = (total_element % 3) * 5;
-      const __mmask16 row_mask =
-          (static_cast<std::uint32_t>(1) << remain) - 1;
-
-      const __mmask16 row5_mask =
-          (static_cast<std::uint32_t>(1) << 5) - 1;
-      const __mmask16 row10_mask =
-          ((static_cast<std::uint32_t>(1) << 5) - 1) << 5;
-      const __mmask16 row15_mask =
-          ((static_cast<std::uint32_t>(1) << 5) - 1) << 10;
-
-      __m512 element_row;
-      __m512 element_col[n];
-
-      for (int64 batch = 0; batch < batch_b; batch++) {
-        for (int64 p = 0; p < paralle_num; p++) {
-          // 1. init B _m512 vector
-          for(int iter = 0; iter < n; iter++){
-            // hard code here, cause of the k is fixed as 5.
-            element_col[iter] = _mm512_set_ps(
-              /* 15 */ 0,
-              /* 14 */ *(ADDRESS(_tmp_b_ptr, 4, iter, n)),
-              /* 13 */ *(ADDRESS(_tmp_b_ptr, 3, iter, n)),
-              /* 12 */ *(ADDRESS(_tmp_b_ptr, 2, iter, n)),
-              /* 11 */ *(ADDRESS(_tmp_b_ptr, 1, iter, n)),
-              /* 10 */ *(ADDRESS(_tmp_b_ptr, 0, iter, n)),
-              /*  9 */ *(ADDRESS(_tmp_b_ptr, 4, iter, n)),
-              /*  8 */ *(ADDRESS(_tmp_b_ptr, 3, iter, n)),
-              /*  7 */ *(ADDRESS(_tmp_b_ptr, 2, iter, n)),
-              /*  6 */ *(ADDRESS(_tmp_b_ptr, 1, iter, n)),
-              /*  5 */ *(ADDRESS(_tmp_b_ptr, 0, iter, n)),
-              /*  4 */ *(ADDRESS(_tmp_b_ptr, 4, iter, n)),
-              /*  3 */ *(ADDRESS(_tmp_b_ptr, 3, iter, n)),
-              /*  2 */ *(ADDRESS(_tmp_b_ptr, 2, iter, n)),
-              /*  1 */ *(ADDRESS(_tmp_b_ptr, 1, iter, n)),
-              /*  0 */ *(ADDRESS(_tmp_b_ptr, 0, iter, n))
-            );
-          }
-          
-          for (int64 pow = 0; pow < pow_num; pow++) {
-            // 2. load part of A
-            for(int iter = 0; iter < n; iter++){
-              //2.1 init A _m512 vector with 3 rows
-              int loop = 0;
-              for(; loop < total_loops; loop++){
-                element_row = _mm512_loadu_ps(tmp_pow_ptr + (p * pow_num + pow) * m * k + loop * 3 * k);
-                element_row = _mm512_mul_ps(element_row, element_col[iter]);
-                temp_c[3 * loop] = _mm512_mask_reduce_add_ps(row5_mask, element_row);
-                temp_c[3 * loop + 1] = _mm512_mask_reduce_add_ps(row10_mask, element_row);
-                temp_c[3 * loop + 2] = _mm512_mask_reduce_add_ps(row15_mask, element_row);
-              }
-              if (remain){
-                element_row = _mm512_maskz_loadu_ps(row_mask, tmp_pow_ptr + (p * pow_num + pow) * m * k + loop * 3 * k);
-                element_row = _mm512_mul_ps(element_row, element_col[iter]);
-                if (remain / 5 == 1){
-                  temp_c[3 * loop] = _mm512_mask_reduce_add_ps(row5_mask, element_row);
-                } else {
-                  temp_c[3 * loop] = _mm512_mask_reduce_add_ps(row5_mask, element_row);
-                  temp_c[3 * loop + 1] = _mm512_mask_reduce_add_ps(row10_mask, element_row);
-                }
-              }
-              
-              //2.2 tanh
-              const int _total_loops = (m) / 16;
-              const int _remain = (m) % 16;
-              const __mmask16 _row_mask =
-                (static_cast<std::uint32_t>(1) << _remain) - 1;
-              __m512 _acc_vector = _mm512_setzero_ps();
-              int _loop = 0;
-              for(; _loop < _total_loops; _loop++){
-                _acc_vector = _mm512_add_ps(_acc_vector, avx512_tanh(_mm512_loadu_ps(temp_c + 16 * _loop)));
-              }
-              if (_remain){
-                _acc_vector = _mm512_mask_add_ps(_acc_vector, _row_mask, avx512_tanh(_mm512_maskz_loadu_ps(_row_mask, temp_c + 16 * _loop)), _acc_vector);
-              }
-
-              //2.3 reduce_sum
-              *(c_ptr + ((batch * paralle_num + p) * pow_num + pow) * 1 * n  + iter) = _mm512_reduce_add_ps(_acc_vector);
-            }
-          }
-          
-        }
-      }
-      
-      delete[] temp_c;
-      delete[] temp_b;
-      ShowLog("OptCoActionOp:LaunchCoAction:end DNN");
-    }
-#else
-    for (int64 batch = 0; batch < batch_b; batch++) {
-      for (int64 p = 0; p < paralle_num; p++) {
-        for (int64 pow = 0; pow < pow_num; pow++) {
-          TF_RETURN_IF_ERROR(OptCoActionCPU<Scalar>(
-              context->eigen_device<CPUDevice>(), m, n, k,
-              tmp_pow_ptr + (p * pow_num + pow) * m * k,
-              b_ptr + (batch * paralle_num + p) * k * n,
-              c_ptr + ((batch * paralle_num + p) * pow_num + pow) * 1 * n));
-        }
-      }
+    if (m == 50 && k == 5 && n == 4 && pow_num == 2) {
+      ComputeCoActionIndicator<false, Scalar, Scalar, 2, 50, 5, 4>(
+        context, a_ptr, b_ptr, nullptr, c_ptr, batch_a, batch_b, paralle_num);
+    } else if (m == 150 && k == 5 && n == 4 && pow_num == 2) {
+      ComputeCoActionIndicator<false, Scalar, Scalar, 2, 150, 5, 4>(
+        context, a_ptr, b_ptr, nullptr, c_ptr, batch_a, batch_b, paralle_num);
+    } else {
+      return errors::InvalidArgument("Unsupported m, k, n, pow_num: ", m, k, n,
+                                    pow_num);
     }
 #endif
     return Status::OK();
   }
 };
 
-template <typename Scalar>
-struct LaunchOptCoActionV2<CPUDevice, Scalar> {
+template <typename Scalar, typename TIndex>
+struct LaunchOptCoActionIndicator<CPUDevice, Scalar, TIndex> {
   Status operator()(OpKernelContext* context, int64 m, int64 n, int64 k,
-                    const Tensor& in_a, const Tensor& in_b, Tensor* out,
-                    int64 batch_a, int64 batch_b, int64 paralle_num,
-                    int64 pow_num) {
-    auto a_ptr = in_a.template flat<Scalar>().data(); //{1, 1, 50/150, 5}
-    auto b_ptr = in_b.template flat<Scalar>().data(); //{8, 1, 50/150, 4}
-    auto c_ptr = out->template flat<Scalar>().data(); //{8, 1, 2, 4}
+                  const Tensor& in_a, const Tensor& in_b,
+                  const Tensor& indicator, Tensor* out, int64 batch_a,
+                  int64 batch_b, int64 paralle_num, int64 pow_num) {
+    auto a_ptr = in_a.template flat<Scalar>().data();
+    auto b_ptr = in_b.template flat<Scalar>().data();
+    auto c_ptr = out->template flat<Scalar>().data();
+    auto ind_ptr = indicator.template flat<TIndex>().data();
+#ifdef __AVX512F__
+    if (m == 50 && k == 5 && n == 4 && pow_num == 2) {
+      ComputeCoActionIndicator<true, Scalar, TIndex, 2, 50, 5, 4>(
+        context, a_ptr, b_ptr, ind_ptr, c_ptr, batch_a, batch_b, paralle_num);
+    } else if (m == 150 && k == 5 && n == 4 && pow_num == 2) {
+      ComputeCoActionIndicator<true, Scalar, TIndex, 2, 150, 5, 4>(
+        context, a_ptr, b_ptr, ind_ptr, c_ptr, batch_a, batch_b, paralle_num);
+    } else {
+      return errors::InvalidArgument("Unsupported m, k, n, pow_num: ", m, k, n,
+                                    pow_num);
+    }
+#endif
+    return Status::OK();
+  }
+};
+
+template <bool use_indicator, typename Scalar, typename TIndex,
+           /* 2 */int POW_NUM, /* 150/50 */int M_SIZE, /* 5 */int K_SIZE, /* 4 */int N_SIZE>  
+void ComputeCoActionIndicator(const OpKernelContext* context, const Scalar* a_ptr,
+                  const Scalar* b_ptr, const TIndex* indicator, Scalar* c_ptr,
+                  const int64 batch_a, const int64 batch_b, const int64 paralle_num){
 #ifdef __AVX512F__
   {
-    const __mmask16 row_mask =
+    const __mmask16 row_mask_0 =
         (static_cast<std::uint32_t>(1) << 4) - 1;
-    const __mmask16 row4_mask =
+    const __mmask16 row_mask_4 =
         ((static_cast<std::uint32_t>(1) << 4) - 1) << 4;
-    const __mmask16 row8_mask =
+    const __mmask16 row_mask_8 =
         ((static_cast<std::uint32_t>(1) << 4) - 1) << 8;
-    const __mmask16 row12_mask =
+    const __mmask16 row_mask_12 =
         ((static_cast<std::uint32_t>(1) << 4) - 1) << 12;
 
     __m512 va, vb, vc, vc2, v_rtn, v_rtn2;
     __m512 v_zero = _mm512_setzero_ps();
     
-    ShowLog("LaunchOptCoActionV2:before for");
     for (int64 batch = 0; batch < batch_b; batch+=4) {
       for (int64 p = 0; p < paralle_num; p++) {
         v_rtn = v_zero;
         v_rtn2 = v_zero;
-        for(int64 iter_m = 0; iter_m < m; iter_m++) {
+        for(int64 m = 0; m < M_SIZE; m++) {
           vc = v_zero;
           vc2 = v_zero;
-          for(int64 iter_k = 0; iter_k < k; iter_k++) {
+          for(int64 k = 0; k < K_SIZE; k++) {
             // va=broadcasts(a_ptr[m,k]), vb=b_ptr[k, 0~n] * 4 * batchSize
-            va = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS_A(a_ptr, p, iter_m, iter_k)));
+            if(use_indicator){
+              FITTING_VA(0, 0);
+              FITTING_VA(1, 4);
+              FITTING_VA(2, 8);
+              FITTING_VA(3, 12);
+            } else {
+              va = _mm512_broadcastss_ps(_mm_load_ss(ADDRESS_A(a_ptr, p, m, k)));
+            }
             // todo(marvin):  Do we have a better way to load vb?
             vb = _mm512_set_ps(
-              *ADDRESS_B(b_ptr, batch + 3, p, iter_k, 3), *ADDRESS_B(b_ptr, batch + 3, p, iter_k, 2),
-              *ADDRESS_B(b_ptr, batch + 3, p, iter_k, 1), *ADDRESS_B(b_ptr, batch + 3, p, iter_k, 0),
-              *ADDRESS_B(b_ptr, batch + 2, p, iter_k, 3), *ADDRESS_B(b_ptr, batch + 2, p, iter_k, 2),
-              *ADDRESS_B(b_ptr, batch + 2, p, iter_k, 1), *ADDRESS_B(b_ptr, batch + 2, p, iter_k, 0),
-              *ADDRESS_B(b_ptr, batch + 1, p, iter_k, 3), *ADDRESS_B(b_ptr, batch + 1, p, iter_k, 2),
-              *ADDRESS_B(b_ptr, batch + 1, p, iter_k, 1), *ADDRESS_B(b_ptr, batch + 1, p, iter_k, 0),
-              *ADDRESS_B(b_ptr, batch + 0, p, iter_k, 3), *ADDRESS_B(b_ptr, batch + 0, p, iter_k, 2),
-              *ADDRESS_B(b_ptr, batch + 0, p, iter_k, 1), *ADDRESS_B(b_ptr, batch + 0, p, iter_k, 0)
+              *ADDRESS_B(b_ptr, batch + 3, p, k, 3), *ADDRESS_B(b_ptr, batch + 3, p, k, 2),
+              *ADDRESS_B(b_ptr, batch + 3, p, k, 1), *ADDRESS_B(b_ptr, batch + 3, p, k, 0),
+              *ADDRESS_B(b_ptr, batch + 2, p, k, 3), *ADDRESS_B(b_ptr, batch + 2, p, k, 2),
+              *ADDRESS_B(b_ptr, batch + 2, p, k, 1), *ADDRESS_B(b_ptr, batch + 2, p, k, 0),
+              *ADDRESS_B(b_ptr, batch + 1, p, k, 3), *ADDRESS_B(b_ptr, batch + 1, p, k, 2),
+              *ADDRESS_B(b_ptr, batch + 1, p, k, 1), *ADDRESS_B(b_ptr, batch + 1, p, k, 0),
+              *ADDRESS_B(b_ptr, batch + 0, p, k, 3), *ADDRESS_B(b_ptr, batch + 0, p, k, 2),
+              *ADDRESS_B(b_ptr, batch + 0, p, k, 1), *ADDRESS_B(b_ptr, batch + 0, p, k, 0)
             );
             vc = _mm512_fmadd_ps(va, vb, vc);
             vc2 = _mm512_fmadd_ps(_mm512_mul_ps(va, va), vb, vc2);
@@ -446,24 +312,21 @@ struct LaunchOptCoActionV2<CPUDevice, Scalar> {
         }
 
         // store 4*2 elements
-        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 0, p, 0, 0),   row_mask,  v_rtn);
-        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 1, p, 0, 0),  row4_mask,  v_rtn);
-        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 2, p, 0, 0),  row8_mask,  v_rtn);
-        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 3, p, 0, 0), row12_mask,  v_rtn);
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 0, p, 0, 0),   row_mask_0,  v_rtn);
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 1, p, 0, 0),  row_mask_4,  v_rtn);
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 2, p, 0, 0),  row_mask_8,  v_rtn);
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 3, p, 0, 0), row_mask_12,  v_rtn);
         
-        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 0, p, 1, 0),   row_mask, v_rtn2);
-        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 1, p, 1, 0),  row4_mask, v_rtn2);
-        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 2, p, 1, 0),  row8_mask, v_rtn2);
-        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 3, p, 1, 0), row12_mask, v_rtn2);
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 0, p, 1, 0),   row_mask_0, v_rtn2);
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 1, p, 1, 0),  row_mask_4, v_rtn2);
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 2, p, 1, 0),  row_mask_8, v_rtn2);
+        _mm512_mask_compressstoreu_ps(ADDRESS_C(c_ptr, batch + 3, p, 1, 0), row_mask_12, v_rtn2);
         
       }
     }
-    ShowLog("LaunchOptCoActionV2:end for");
   }
 #endif
-    return Status::OK();
-  }
-};
+}
 //----------------------------------------------------------------------------//
 
 template <typename Scalar, typename TIndex>
@@ -587,7 +450,7 @@ class CoActionOp : public OpKernel {
                 << ", " << b.shape().DebugString();
     }
 
-    OP_REQUIRES_OK(ctx, enable_opt ? LaunchOptCoActionV2<Device, Scalar>()(ctx, d0, d3, d1, a, b,
+    OP_REQUIRES_OK(ctx, enable_opt ? LaunchOptCoAction<Device, Scalar>()(ctx, d0, d3, d1, a, b,
                                                          out, batch_a, batch_b,
                                                          parallel_a, pow_num)
                                     :LaunchCoAction<Device, Scalar>()(ctx, d0, d3, d1, a, b,
@@ -685,6 +548,7 @@ class CoActionIndicatorOp : public OpKernel {
   explicit CoActionIndicatorOp(OpKernelConstruction* context)
       : OpKernel(context) {
     OP_REQUIRES_OK(context, context->GetAttr("pow_num", &pow_num));
+    ReadBoolFromEnvVar("TF_CO_ACTION_OPT", false, &enable_opt);
   }
 
   ~CoActionIndicatorOp() = default;
@@ -756,7 +620,97 @@ class CoActionIndicatorOp : public OpKernel {
                 << ", " << b.shape().DebugString();
     }
 
-    OP_REQUIRES_OK(ctx, LaunchCoActionIndicator<Device, Scalar, TIndex>()(
+    OP_REQUIRES_OK(ctx, enable_opt ? LaunchOptCoActionIndicator<Device, Scalar, TIndex>()(
+                            ctx, d0, d3, d1, a, b, ind, out, batch_a, batch_b,
+                            parallel_a, pow_num)
+                            : LaunchCoActionIndicator<Device, Scalar, TIndex>()(
+                            ctx, d0, d3, d1, a, b, ind, out, batch_a, batch_b,
+                            parallel_a, pow_num));
+  }
+
+ private:
+  int64 pow_num;
+  bool enable_opt;
+};
+
+template <typename Device, typename Scalar, typename TIndex>
+class OptCoActionIndicatorOp : public OpKernel {
+ public:
+  explicit OptCoActionIndicatorOp(OpKernelConstruction* context)
+      : OpKernel(context) {
+    OP_REQUIRES_OK(context, context->GetAttr("pow_num", &pow_num));
+  }
+
+  ~OptCoActionIndicatorOp() = default;
+
+  void Compute(OpKernelContext* ctx) override {
+    auto& a = ctx->input(0);
+    auto& b = ctx->input(1);
+    auto& ind = ctx->input(2);
+
+    OP_REQUIRES(ctx, a.dims() == 4,
+                errors::InvalidArgument("In[0] ndims must be 4: ", a.dims()));
+    OP_REQUIRES(ctx, b.dims() == 4,
+                errors::InvalidArgument("In[1] ndims must be 4: ", b.dims()));
+    OP_REQUIRES(ctx, ind.dims() == 1,
+                errors::InvalidArgument("In[2] ndims must be 1: ", ind.dims()));
+    // currently only support m=150/50, k=5, n=4, pow=2
+    OP_REQUIRES(
+        ctx, a.dim_size(2) == 50 || a.dim_size(2) == 150,
+        errors::InvalidArgument("m must be 50 or 150: ", a.dim_size(2)));
+    OP_REQUIRES(ctx, pow_num == 2,
+                errors::InvalidArgument("pow_num must == 2: ", pow_num));
+    OP_REQUIRES(ctx, b.dim_size(2) == 5,
+                errors::InvalidArgument("k must be 5: ", b.dim_size(2)));
+    OP_REQUIRES(ctx, b.dim_size(3) == 4,
+                errors::InvalidArgument("n must be 4: ", b.dim_size(3)));
+
+    int64 d0 = a.dim_size(2);
+    int64 d1 = a.dim_size(3);
+    int64 d2 = b.dim_size(2);
+    int64 d3 = b.dim_size(3);
+    OP_REQUIRES(ctx, d1 == d2,
+                errors::InvalidArgument("a mismatch b shape: ", d1, " vs. ", d2,
+                                        ": ", a.shape().DebugString(), " ",
+                                        b.shape().DebugString()));
+    int64 parallel_a = a.dim_size(1);
+    int64 parallel_b = b.dim_size(1);
+    OP_REQUIRES(ctx, parallel_a == parallel_b,
+                errors::InvalidArgument(
+                    "parallel_a mismatch parallel_b : ", parallel_a, " vs. ",
+                    parallel_b, ": ", a.shape().DebugString(), " ",
+                    b.shape().DebugString()));
+    int64 batch_a = a.dim_size(0);
+    int64 batch_b = b.dim_size(0);
+    int64 ind_length = ind.dim_size(0);
+    OP_REQUIRES(
+        ctx, batch_b == ind_length,
+        errors::InvalidArgument(
+            "b_batch mismatch indicator length: ", batch_b, " vs. ", ind_length,
+            ": ", b.shape().DebugString(), " ", ind.shape().DebugString()));
+    TensorShape out_shape({batch_b, parallel_a, pow_num, d3});
+    Tensor* out = nullptr;
+    OP_REQUIRES_OK(ctx, ctx->allocate_output(0, out_shape, &out));
+    if (out->NumElements() == 0) {
+      return;
+    }
+    if (a.NumElements() == 0 || b.NumElements() == 0) {
+      functor::SetZeroFunctor<Device, Scalar> f;
+      f(ctx->eigen_device<Device>(), out->flat<Scalar>());
+      return;
+    }
+
+    //[PROF-STATS]
+    int64 delta = 2 * d1 * out_shape.num_elements() * pow_num;
+    if (VLOG_IS_ON(1)) {
+      LOG(INFO) << "FLOPs = " << delta
+                << ", " << type_string()
+                << ", " << name()
+                << ", " << a.shape().DebugString()
+                << ", " << b.shape().DebugString();
+    }
+
+    OP_REQUIRES_OK(ctx, LaunchOptCoActionIndicator<Device, Scalar, TIndex>()(
                             ctx, d0, d3, d1, a, b, ind, out, batch_a, batch_b,
                             parallel_a, pow_num));
   }
@@ -770,7 +724,7 @@ class CoActionIndicatorOp : public OpKernel {
       Name("CoAction").Device(DEVICE_CPU).TypeConstraint<TYPE>("T"),    \
       CoActionOp<CPUDevice, TYPE>);                                     \
   REGISTER_KERNEL_BUILDER(                                              \
-      Name("OptCoAction").Device(DEVICE_CPU).TypeConstraint<TYPE>("T"),\
+      Name("OptCoAction").Device(DEVICE_CPU).TypeConstraint<TYPE>("T"), \
       OptCoActionOp<CPUDevice, TYPE>);                                  \
   REGISTER_KERNEL_BUILDER(Name("CoActionIndicator")                     \
                               .Device(DEVICE_CPU)                       \
@@ -781,7 +735,12 @@ class CoActionIndicatorOp : public OpKernel {
                               .Device(DEVICE_CPU)                       \
                               .TypeConstraint<TYPE>("T")                \
                               .TypeConstraint<int64>("Tindices"),       \
-                          CoActionIndicatorOp<CPUDevice, TYPE, int64>);
+                          CoActionIndicatorOp<CPUDevice, TYPE, int64>); \
+  REGISTER_KERNEL_BUILDER(Name("OptCoActionIndicator")                    \
+                              .Device(DEVICE_CPU)                         \
+                              .TypeConstraint<TYPE>("T")                  \
+                              .TypeConstraint<int64>("Tindices"),         \
+                          OptCoActionIndicatorOp<CPUDevice, TYPE, int64>);
 
 REGISTER_COACTION_CPU(float);
 // REGISTER_COACTION_CPU(Eigen::half);
