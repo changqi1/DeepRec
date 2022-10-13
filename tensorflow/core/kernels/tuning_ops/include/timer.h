@@ -4,7 +4,11 @@
 #include <string>
 #include <iostream>
 
+//#define TimeSP
+
 using namespace std;
+
+#ifdef TimeSP
 
 class Timer {
 public:
@@ -36,5 +40,46 @@ private:
 
   bool print;
 };
+
+#else
+
+double ms_now() {
+    auto timePointTmp
+            = std::chrono::high_resolution_clock::now().time_since_epoch();
+    return std::chrono::duration<double, std::milli>(timePointTmp).count();
+}
+
+class Timer {
+public:
+  Timer(bool _print = false) : print(_print) {
+    start = ms_now();
+  }
+
+  ~Timer() {
+    if (print) {
+      end = ms_now();
+      double interval = end - start;
+      printf("%lf ms\n", interval);
+    }
+  }
+
+  void reset() {
+    start = ms_now();
+  }
+
+  double getTime() {
+    end = ms_now();
+    double interval = end - start;
+    return interval;
+  }
+
+private:
+  double start;
+  double end;
+
+  bool print;
+};
+
+#endif
 
 #endif

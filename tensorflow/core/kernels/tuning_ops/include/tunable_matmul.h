@@ -29,6 +29,7 @@ void ShowLog(const std::string& msg);
 #define MAX_GROUP_LIMIT 8
 
 typedef float T;
+typedef double Tt;
 
 typedef std::function<bool(std::vector<int> const &param)> VerifyFunc;
 
@@ -42,10 +43,10 @@ struct TuningParam {
 
 struct PerfStat
 {
-  float avg_latency;
-  float min_latency;
-  float max_latency;
-  float variance;
+  Tt avg_latency;
+  Tt min_latency;
+  Tt max_latency;
+  Tt variance;
   int samples;
 };
 
@@ -336,7 +337,7 @@ static T* transpose(const T *src, T *dst, int src_stride, int src_length, int sr
     mmsize.thread_pool->parallelFor(task_pool_param.size(), cost, _worker); \
   }                                                                         \
 }                                                                           \
-
+/*
 static void v1(const T* A, const T* B, T* C, const MatmulSize& mmsize,
                const SmallKernels& kernels) {
   std::vector<std::tuple<int, int, int, int>> task_pool_param;
@@ -445,8 +446,8 @@ static void v1(const T* A, const T* B, T* C, const MatmulSize& mmsize,
     mmsize.thread_pool->parallelFor(task_pool_param.size(), cost, _worker);
   }
 }                                                                   
-
-  //  FUNC_DEF_HEAD(v1) LOOP1 LOOP2 LOOP3 LOOP4 LOOPE FUNC_DEF_TAIL
+*/
+   FUNC_DEF_HEAD(v1) LOOP1 LOOP2 LOOP3 LOOP4 LOOPE FUNC_DEF_TAIL
    FUNC_DEF_HEAD(v2) LOOP1 LOOP2 LOOP4 LOOP3 LOOPE FUNC_DEF_TAIL
    FUNC_DEF_HEAD(v3) LOOP1 LOOP3 LOOP2 LOOP4 LOOPE FUNC_DEF_TAIL
    FUNC_DEF_HEAD(v4) LOOP1 LOOP3 LOOP4 LOOP2 LOOPE FUNC_DEF_TAIL
@@ -637,7 +638,7 @@ public:
   void tune(bool flush_b, const T * a, const T * b, T * c)
   {
     MatmulSize mmsize = mmconfig.mmsize;
-    float best = std::numeric_limits<float>::max();
+    Tt best = std::numeric_limits<Tt>::max();
     auto bm_compare = [a, b, c, flush_b, &best, this](INNER_MATMUL_FUNC impl,
                                                       const MatmulSize &mmsize,
                                                       const SmallKernels &kernels)
@@ -652,7 +653,7 @@ public:
         mmconfig.impl = impl;
       }
 
-      printf("\t%p: avg=%f, max=%f, min=%f. BEST=%f\n", impl,
+      printf("\t%p: avg=%lf, max=%lf, min=%lf. BEST=%lf\n", impl,
              stat.avg_latency, stat.max_latency, stat.min_latency, best);
     };
 
@@ -664,16 +665,20 @@ public:
     MatmulSize mmsize = mmconfig.mmsize;
     SmallKernels kernels;
 
-    // Allocate buffer and prepare data for A and B
-    T *a = (T *)aligned_alloc(64, mmsize.m * mmsize.lda * sizeof(T));
-    T *b = (T *)aligned_alloc(64, mmsize.k * mmsize.ldb * sizeof(T));
-    T *c = (T *)aligned_alloc(64, mmsize.m * mmsize.ldc * sizeof(T));
+    int a_cnt = mmsize.ta? mmsize.k * mmsize.lda : mmsize.m * mmsize.lda;
+    int b_cnt = mmsize.tb? mmsize.n * mmsize.ldb : mmsize.k * mmsize.ldb;
+    int c_cnt = mmsize.m * mmsize.ldc;
 
-    for (int i = 0; i < mmsize.m * mmsize.lda; ++i)
+    // Allocate buffer and prepare data for A and B
+    T *a = (T *)aligned_alloc(64, a_cnt * sizeof(T));
+    T *b = (T *)aligned_alloc(64, b_cnt * sizeof(T));
+    T *c = (T *)aligned_alloc(64, c_cnt * sizeof(T));
+
+    for (int i = 0; i < a_cnt; ++i)
     {
       a[i] = static_cast<T>(1.0f * rand() / RAND_MAX);
     }
-    for (int i = 0; i < mmsize.k * mmsize.ldb; ++i)
+    for (int i = 0; i < b_cnt; ++i)
     {
       b[i] = static_cast<T>(1.0f * rand() / RAND_MAX);
     }
@@ -687,8 +692,7 @@ public:
 
   void host_tune(bool flush_b, const T * a, const T * b, T * c)
   {
-    std::lock_guard<std::mutex> lk(mMutex);
-
+//    std::lock_guard<std::mutex> lk(mMutex);
     ShowLog("start of   void host_tune(bool flush_b, const T * a, const T * b, T * c)");
     total_cycle_++;
     total_per_cycle_ = 0;
@@ -711,7 +715,7 @@ public:
 
     if(state == HostProxy::State::UNINITIALIZED){
       
-      float best = std::numeric_limits<float>::max();
+      Tt best = std::numeric_limits<Tt>::max();
 
       auto cust_condition = [&my_host_proxy, this](TuningContext &context){
         this->total_per_cycle_++;
@@ -746,25 +750,26 @@ public:
         int impl_id = this->space[IMPL].min_max_value[params[IMPL]];
         const MatmulImpl& matmulImpl = impl_list[impl_id];
 
-        // std::cout << "mmsize.bm = " << mmsize.bm << std::endl;
-        // std::cout << "mmsize.bn = " << mmsize.bn << std::endl;
-        // std::cout << "mmsize.bk = " << mmsize.bk << std::endl;
-        // std::cout << "mmsize.mgroups = " << mmsize.mgroups << std::endl;
-        // std::cout << "mmsize.ngroups = " << mmsize.ngroups << std::endl;
-        // std::cout << "mmsize.kgroups = " << mmsize.kgroups << std::endl;
-        // std::cout << "impl_id = " << impl_id << std::endl;
-
-        // Verify the parameters
 #ifdef USE_LIBXSMM
 	// libxsmm with noblas (mnk)^1/3 <= 64
-	if (mmsize.bm * mmsize.bn * mmsize.bk > 64*64*64)
-            return std::numeric_limits<float>::max();
+	if ((double)mmsize.bm * mmsize.bn * mmsize.bk > 64.0*64*64) {
+            return std::numeric_limits<Tt>::max();
+	}
 #endif
+         //std::cout << "mmsize.bm = " << mmsize.bm << std::endl;
+         //std::cout << "mmsize.bn = " << mmsize.bn << std::endl;
+         //std::cout << "mmsize.bk = " << mmsize.bk << std::endl;
+         //std::cout << "mmsize.mgroups = " << mmsize.mgroups << std::endl;
+         //std::cout << "mmsize.ngroups = " << mmsize.ngroups << std::endl;
+         //std::cout << "mmsize.kgroups = " << mmsize.kgroups << std::endl;
+         //std::cout << "impl_id = " << impl_id << std::endl;
+
+        // Verify the parameters
         for(auto _item : this->space){
           if(_item.verify_func == nullptr) continue;
 
           if(!_item.verify_func(params)){
-            return std::numeric_limits<float>::max();
+            return std::numeric_limits<Tt>::max();
           }
         }
 
@@ -784,9 +789,13 @@ public:
         // Update kernel according to block size
         update_kernels(kernels, mmsize.bm, mmsize.bn);
 
+        //std::cout << "mmsize.bm/n/k = " << mmsize.bm << " " << mmsize.bn << " " << mmsize.bk << std::endl;
+        //std::cout << "mmsize.m/n/kgroups = " << mmsize.mgroups << " " << mmsize.ngroups << " " << mmsize.kgroups << std::endl;
+        //std::cout << "impl_id = " << impl_id << std::endl;
         // benchmark and record the best
         PerfStat stat = benchmark(matmulImpl.impl, mmsize, kernels,
                                   this->mmconfig.A, this->mmconfig.B, this->mmconfig.C, flush_b);
+        //std::cout << "impl_id = " << impl_id << " latency(best) = " << stat.avg_latency << "(" << best << ")" << std::endl;
         // Update the config.
         if (stat.avg_latency < best)
         {
@@ -799,10 +808,16 @@ public:
         return stat.avg_latency;
       };
 
-      char *algo = "GA";
+      std::string algo;
+      char *algo_env = getenv("TF_TUNING_ALGO");
+      if (algo_env == nullptr) {
+	algo = "GA"; 
+      } else {
+	algo = algo_env;
+      }
       int gens = 50;
       int pops = 20;
-      my_host_proxy->SetAlgorithm(algo, gens, pops);
+      my_host_proxy->SetAlgorithm(algo.c_str(), gens, pops);
 
       for(auto param : space){
         my_host_proxy->SetParamter(param.name.c_str(), param.min_max_index.first, param.min_max_index.second);
@@ -838,18 +853,21 @@ public:
   void verify()
   {
     MatmulSize mmsize = mmconfig.mmsize;
+    int a_cnt = mmsize.ta? mmsize.k * mmsize.lda : mmsize.m * mmsize.lda;
+    int b_cnt = mmsize.tb? mmsize.n * mmsize.ldb : mmsize.k * mmsize.ldb;
+    int c_cnt = mmsize.m * mmsize.ldc;
 
     // Allocate buffer and prepare data for A and B
-    T *a = (T *)aligned_alloc(64, mmsize.m * mmsize.lda * sizeof(T));
-    T *b = (T *)aligned_alloc(64, mmsize.k * mmsize.ldb * sizeof(T));
-    T *c = (T *)aligned_alloc(64, mmsize.m * mmsize.ldc * sizeof(T));
-    T *ref_c = (T *)aligned_alloc(64, mmsize.m * mmsize.ldc * sizeof(T));
+    T *a = (T *)aligned_alloc(64, a_cnt * sizeof(T));
+    T *b = (T *)aligned_alloc(64, b_cnt * sizeof(T));
+    T *c = (T *)aligned_alloc(64, c_cnt * sizeof(T));
+    T *ref_c = (T *)aligned_alloc(64, c_cnt * sizeof(T));
 
-    for (int i = 0; i < mmsize.m * mmsize.lda; ++i)
+    for (int i = 0; i < a_cnt; ++i)
     {
       a[i] = static_cast<T>(1.0f * rand() / RAND_MAX);
     }
-    for (int i = 0; i < mmsize.k * mmsize.ldb; ++i)
+    for (int i = 0; i < b_cnt; ++i)
     {
       b[i] = static_cast<T>(1.0f * rand() / RAND_MAX);
     }
@@ -1238,7 +1256,7 @@ private:
     // Enumerate all splits
     int position = 0;
     int bm, bn, bk;
-    float best = std::numeric_limits<float>::max();
+    Tt best = std::numeric_limits<Tt>::max();
     while (get_split(bm_list, bn_list, bk_list, bm, bn, bk, position++))
     {
 
@@ -1403,7 +1421,7 @@ private:
     const int benchmark_loops = 1;
 
     PerfStat perfStat;
-    std::vector<float> latencies;
+    std::vector<Tt> latencies;
     latencies.reserve(benchmark_loops);
 
     // Warmup and benchmark
@@ -1423,8 +1441,8 @@ private:
     // Stat the perf data
     perfStat.avg_latency = 0;
     perfStat.max_latency = 0;
-    perfStat.min_latency = std::numeric_limits<float>::max();
-    for (float latency : latencies)
+    perfStat.min_latency = std::numeric_limits<Tt>::max();
+    for (Tt latency : latencies)
     {
       if (latency > perfStat.max_latency)
         perfStat.max_latency = latency;
