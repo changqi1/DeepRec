@@ -591,7 +591,7 @@ cc_library(
         ":arithmetic_optimizer",
         ":auto_mixed_precision",
         ":auto_parallel",
-        ":concat_cast_fusing",
+        ":split_concat_fuse",
         ":constant_folding",
         ":custom_graph_optimizer_registry",
         ":debug_stripper",
@@ -1184,31 +1184,50 @@ tf_cc_test(
 )
 
 cc_library(
-    name = "concat_cast_fusing",
-    srcs = ["concat_cast_fusing.cc"],
-    hdrs = ["concat_cast_fusing.h"],
+    name = "split_concat_fuse",
+    srcs = ["split_concat_fuse.cc"],
+    hdrs = ["split_concat_fuse.h"],
     visibility = ["//visibility:public"],
     deps = [
         ":graph_optimizer",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/grappler:grappler_item",
+        "//tensorflow/core/grappler:mutable_graph_view",
+        "//tensorflow/core/grappler:op_types",
+        "//tensorflow/core/grappler:utils",
         "//tensorflow/core/grappler/costs:graph_properties",
+        "//tensorflow/core/grappler:graph_view",
         "//tensorflow/core/grappler/utils:graph_view",
+        "//tensorflow/core/grappler/utils:symbolic_shapes",
+        "//tensorflow/core/grappler/utils:topological_sort",
+        "//tensorflow/core/grappler/utils:pattern_utils",
     ],
 )
 
 tf_cc_test(
-    name = "concat_cast_fusing_test",
-    srcs = ["concat_cast_fusing_test.cc"],
-    tags = [
-        "no_gpu",
-        "no_pip_gpu"
-    ],
+    name = "split_concat_fuse_test",
+    srcs = ["split_concat_fuse_test.cc"],
     deps = [
-        ":concat_cast_fusing",
+        ":split_concat_fuse",
+        ":dependency_optimizer",
         "//tensorflow/cc:array_ops_internal",
         "//tensorflow/cc:cc_ops",
-        "//tensorflow/cc:client_session",
+        "//tensorflow/cc:cc_ops_internal",
+        "//tensorflow/core:all_kernels",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:core_cpu_internal",
+        "//tensorflow/core:direct_session",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:lib_internal",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
+        "//tensorflow/core/grappler:grappler_item",
+        "//tensorflow/core/grappler:utils",
         "//tensorflow/core/grappler/utils:grappler_test",
+        "//tensorflow/cc:client_session"
     ],
-)
+) 
