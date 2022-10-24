@@ -103,10 +103,12 @@ class HostProxy {
     std::mutex mMutex;
     std::atomic<bool> mStopRequest{false};
     IterManger mIterManger;
+    void * mOptParam = nullptr;
     void *mSuiteBase = nullptr;
     void *mOptimizerIF = nullptr;
     void *mParamsMapStringToString = nullptr;
     void *mBestParamsMapStringToString = nullptr;
+    void * mSuiteWrapper = nullptr;
 };
 
 #endif

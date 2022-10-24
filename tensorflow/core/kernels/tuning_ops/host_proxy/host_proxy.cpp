@@ -16,7 +16,8 @@ extern "C" {
 
 #include <iostream>
 #include <stdlib.h>
-
+#include <memory>
+#include <string.h>
 struct SuiteWrapper {
     Suite base;
     HostProxy *proxy;
@@ -160,7 +161,8 @@ void HostProxy::Regist() {
     mParamsMapStringToString = (Map_StringToString)mss;
     mBestParamsMapStringToString = (Map_StringToString)curBestmss;
     mSuiteBase = (Suite *)pp_Suite;
-
+    mOptParam = (OptParam *)p_OptParam;
+    mSuiteWrapper = (SuiteWrapper *)suite_wrapper;
     for(auto hostParam:mTuneParams){
         mTunedResult[hostParam.name] = -std::numeric_limits<int>::max();
         mTuningContext.cur_tune_params[hostParam.name] = -std::numeric_limits<int>::max();
@@ -222,7 +224,7 @@ void HostProxy::Tune() {
         Regist();
     }
 
-    // std::cout << "Start tune!" << std::endl;
+    std::cout << "Start tune!" << std::endl;
     std::map<std::string, int> tmpParams;
     float tmpFitness = -std::numeric_limits<float>::max();
     while (!tuneOneIteration((ParamOptimizerIF *)mOptimizerIF, (Suite *)mSuiteBase,
@@ -252,10 +254,12 @@ void HostProxy::Tune() {
     PushBestTunedResult();
 
     freeSpace((ParamOptimizerIF *)mOptimizerIF, (Map_StringToString)mParamsMapStringToString,
-              (Map_StringToString)mBestParamsMapStringToString, (Suite *)mSuiteBase);
+              (Map_StringToString)mBestParamsMapStringToString, (Suite *)mSuiteBase,(OptParam*)mOptParam);
     std::lock_guard<std::mutex> lk(mMutex);
+    free(mSuiteWrapper);
+    mSuiteWrapper = nullptr;
     mState = State::STOPPED;
-    // std::cout << "Tune over" << std::endl;
+    std::cout << "Tune over" << std::endl;
 }
 
 bool HostProxy::Start() {

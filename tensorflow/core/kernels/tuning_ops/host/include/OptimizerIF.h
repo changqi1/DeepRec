@@ -123,5 +123,5 @@ int getOptParam(Algorithm algo, Suite* p_suite, int gen, int pop, OptParam** pp_
 int tuneSuiteWithOptParam(Suite *p_Suite, OptParam *p_OptParam);
 int registOptimizer(ParamOptimizerIF **p_ParamOptimizer, Suite *p_Suite, OptParam *p_OptParam, Map_StringToString *mss, Map_StringToString *curBestmss);
 bool tuneOneIteration(ParamOptimizerIF *p_ParamOptimizer, Suite *p_Suite, Map_StringToString mss,Map_StringToString curBestmss,float* pbest_fitness);
-void freeSpace(ParamOptimizerIF *p_ParamOptimizer, Map_StringToString mss, Map_StringToString curBestmss, Suite *pp_Suite);
+void freeSpace(ParamOptimizerIF *p_ParamOptimizer, Map_StringToString mss, Map_StringToString curBestmss, Suite *pp_Suite ,OptParam *p_OptParam);
 #endif
