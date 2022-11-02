@@ -3848,6 +3848,133 @@ tf_mkl_kernel_library(
     deps = MATH_DEPS + mkl_deps(),
 )
 
+tf_cc_test_mkl(
+    name = "mkl_matmul_op_test",
+    size = "large",
+    srcs = ["mkl_matmul_op_test.cc"],
+    deps = [
+        ":ops_testutil",
+        ":ops_util",
+        ":mkl_matmul_op",
+        ":tuning_matmul_op",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:framework_internal",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:tensorflow",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+    ],
+)
+
+cc_import(
+    name = "libxsmm",
+    hdrs = glob([
+        "tuning_ops/libxsmm/include/*.h",
+    ]),
+    shared_library = "tuning_ops/libxsmm/lib/libxsmm.so",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "libpta",
+    hdrs =glob([
+        "tuning_ops/host/include/**/*.h",
+        "tuning_ops/host/suite/**/*.h",
+    ]),
+    srcs = glob([
+        "tuning_ops/host/src/**/*.c",
+        "tuning_ops/host/algorithm/**/*.c",
+        "tuning_ops/host/suite/**/*.c",
+    ]),
+    includes = [
+        "tuning_ops/host/algorithm/Bayesian",
+        "tuning_ops/host/algorithm/DE",
+        "tuning_ops/host/algorithm/GA",
+        "tuning_ops/host/algorithm/MOEAD",
+        "tuning_ops/host/algorithm/PSO",
+        "tuning_ops/host/algorithm/share",
+        "tuning_ops/host/algorithm/share/GPR",
+        "tuning_ops/host/driver",
+        "tuning_ops/host/include",
+        "tuning_ops/host/include/DataTypes",
+        "tuning_ops/host/src",
+        "tuning_ops/host/suite/3DAT_latency",
+        "tuning_ops/host/suite/Ackley",
+        "tuning_ops/host/suite/ExpSinFunc",
+        "tuning_ops/host/suite/NetworkAI"
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name="host_proxy",
+    hdrs = glob([
+        "tuning_ops/host_proxy/*.h",
+    ]),
+    srcs = glob([
+        "tuning_ops/host_proxy/*.cpp",
+    ]),
+    # copts = ["-fexceptions", "-g"],
+    # nocopts = "-fno-exceptions",
+    deps = [
+        ":libpta",
+    ]
+)
+
+tf_kernel_library(
+    name = "tuning_matmul_op",
+    srcs = glob([
+        "tuning_ops/*.cc",
+    ]),
+    hdrs = ["mkl_matmul_ops_common.h"],
+    copts = ["-fexceptions", "-march=skylake-avx512", "-g"],
+    nocopts = "-fno-exceptions",
+    includes = [
+        "tuning_ops/include",
+        "tuning_ops/host_proxy",
+        "tuning_ops/libxsmm/include",
+    ],
+    deps = [":host_proxy", ":libxsmm"] + MATH_DEPS + mkl_deps(),
+)
+
+tf_kernel_library(
+    name = "fused_layer_normalize_ops",
+    srcs = [
+        "fused_layer_norm/fused_layer_normalize_ops.cc",
+    ],
+    hdrs = [
+        "fused_layer_norm/compile_util.h",
+        ],
+    deps = ["//third_party/eigen3"] + DYNAMIC_DEPS,
+)
+
+tf_cc_test(
+    name = "fused_layer_normalize_ops_test",
+    size = "small",
+    srcs = [
+        "fused_layer_norm/fused_layer_normalize_ops_test.cc",
+    ],
+    extra_copts = ["-fexceptions"],
+    deps = [
+        ":fused_layer_normalize_ops",
+        ":ops_testutil",
+        ":ops_util",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:framework_internal",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:tensorflow",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+    ],
+)
+
 tf_kernel_library(
     name = "reduction_ops",
     gpu_srcs = ["reduction_gpu_kernels.cu.h"],
