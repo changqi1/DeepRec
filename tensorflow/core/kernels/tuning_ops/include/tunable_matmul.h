@@ -15,7 +15,7 @@
 #include "tensorflow/core/lib/core/threadpool.h"
 
 #include <mutex>
-std::mutex mMutex;
+static std::mutex mMutex;
 
 namespace tensorflow {
 namespace thread {
@@ -24,6 +24,76 @@ class ThreadPool;
 }
 
 void ShowLog(const std::string& msg);
+
+void get_env_algo(std::string &algo, int& gens, int& pops) {
+      char *algo_env = getenv("TF_TUNING_ALGO");
+      if (algo_env == nullptr) {
+	algo = "GA";
+      } else {
+	algo = algo_env;
+      }
+
+      char *gens_env = getenv("TF_TUNING_GENS");
+      if (gens_env == nullptr) {
+	gens = 50;
+      } else {
+	gens = std::stoi(gens_env);
+      }
+
+      char *pops_env = getenv("TF_TUNING_POPS");
+      if (pops_env == nullptr) {
+	pops = 20;
+      } else {
+	pops = std::stoi(pops_env);
+      }
+      ShowLog(" HOST Algo: " + algo + " gens: " + to_string(gens) + " pops: " + to_string(pops));
+      char *gemmk_env = getenv("TF_TUNING_GEMMK");
+      if (gemmk_env == nullptr) {
+	gemmkernel = 2;
+      } else {
+	gemmkernel = std::stoi(gemmk_env);
+      }
+      char *rollback_env = getenv("TF_TUNING_ROLLBACK");
+      if (rollback_env == nullptr) {
+	roll_back = 0;
+      } else {
+	roll_back = std::stoi(rollback_env);
+      }
+      return;
+}
+   
+void get_env_bench(int& warmup_loops, int& benchmark_loops) {
+      char *warmup_env = getenv("TF_TUNING_WARMUP");
+      if (warmup_env == nullptr) {
+	warmup_loops = 0; 
+      } else {
+	warmup_loops = std::stoi(warmup_env);
+      }
+
+      char *bench_env = getenv("TF_TUNING_BENCH");
+      if (bench_env == nullptr) {
+	benchmark_loops = 1; 
+      } else {
+	benchmark_loops = std::stoi(bench_env);
+      }
+      ShowLog(" Benchmarks: " + to_string(warmup_loops) + " " + to_string(benchmark_loops));
+
+      return;
+}
+
+void get_env_cal(bool& vectorized, double& packsize) {
+      char *packsize_env = getenv("TF_TUNING_PACKSIZE");
+      if (packsize_env == nullptr) {
+        vectorized = false;
+ 	packsize = 1; 
+      } else {
+        vectorized = true;
+	packsize = std::stod(packsize_env);
+      }
+
+      ShowLog(" Calculation packetSize: " + to_string(vectorized) + " " + to_string(packsize));
+      return;
+}
 
 #define CACHELINE_SIZE 64
 #define MAX_GROUP_LIMIT 8
@@ -95,6 +165,9 @@ struct MatmulSize
 
   // tensorflow::thread::ThreadPool* thread_pool;
   const Eigen::ThreadPoolDevice* thread_pool;
+
+  bool vectorized;
+  double packsize;
 };
 
 // Inner implementation of matmul
@@ -183,7 +256,7 @@ static T* transpose(const T *src, T *dst, int src_stride, int src_length, int sr
 #define LOOPE { task_pool_param.push_back(std::make_tuple(ig, jg, i, j)); }
 #define LOOPE2 { task_pool_param.push_back(std::make_tuple(ig, jg)); }
 
-// Equals to: //#pragma omp parallel for collapse(4)
+// Equals to: #pragma omp parallel for collapse(4)
 #define PARALLEL_C4 _Pragma("omp parallel for collapse(4)")
 #define PARALLEL_C2 _Pragma("omp parallel for collapse(2)")
 
@@ -201,7 +274,7 @@ static T* transpose(const T *src, T *dst, int src_stride, int src_length, int sr
     task_pool_param.reserve(mmsize.mgroups * mmsize.ngroups);                                           \
 
 
-#ifndef USE_LIBXSMM												 \
+#ifndef USE_GEMMK										 \
 
 #define FUNC_CORE_CAL                                                                                            \
   {                    												 \
@@ -314,7 +387,13 @@ static T* transpose(const T *src, T *dst, int src_stride, int src_length, int sr
       }                                                                     \
     }                                                                       \
   };                                                                        \
-  auto cost = Eigen::TensorOpCost(4*128*128*2, 4*128*128*2, 128*128*2);     \
+  int nblocks = mmsize.kblocks_per_group; 				    \
+  auto cost = Eigen::TensorOpCost((mmsize.bm * mmsize.bk + 		    \
+	mmsize.bk * mmsize.bn) * sizeof(T) * nblocks,      		    \
+	mmsize.bm * mmsize.bn * sizeof(T) * nblocks, 	                    \
+	mmsize.bm * mmsize.bk * mmsize.bn * 				    \
+	(Eigen::TensorOpCost::MulCost<T>() + 				    \
+	Eigen::TensorOpCost::AddCost<T>()) * nblocks, mmsize.vectorized, mmsize.packsize);      \
   for (; kg < mmsize.kgroups; ++kg){                                        \
     mmsize.thread_pool->parallelFor(task_pool_param.size(), cost, _worker); \
   }                                                                         \
@@ -332,7 +411,13 @@ static T* transpose(const T *src, T *dst, int src_stride, int src_length, int sr
         FUNC_CORE_CAL                                                       \
     }                                                                       \
   };                                                                        \
-  auto cost = Eigen::TensorOpCost(4*128*128*2, 4*128*128*2, 128*128*2);     \
+  int nblocks = mmsize.kblocks_per_group * mmsize.nblocks_per_group * mmsize.mblocks_per_group; \
+  auto cost = Eigen::TensorOpCost((mmsize.bm * mmsize.bk + 		    \
+	mmsize.bk * mmsize.bn) * sizeof(T) * nblocks,       		    \
+	mmsize.bm * mmsize.bn * sizeof(T) * nblocks, 	                    \
+	mmsize.bm * mmsize.bk * mmsize.bn * 				    \
+	(Eigen::TensorOpCost::MulCost<T>() + 				    \
+	Eigen::TensorOpCost::AddCost<T>()) * nblocks, mmsize.vectorized, mmsize.packsize);      \
   for (; kg < mmsize.kgroups; ++kg){                                        \
     mmsize.thread_pool->parallelFor(task_pool_param.size(), cost, _worker); \
   }                                                                         \
@@ -369,7 +454,7 @@ static void v1(const T* A, const T* B, T* C, const MatmulSize& mmsize,
             int realbk =
                 mmsize.k - k_off >= mmsize.bk ? mmsize.bk : (mmsize.k - k_off);
             T* pc = &C[i_off * mmsize.ldc + j_off];
-#ifndef USE_LIBXSMM
+#ifndef USE_GEMMK
             T* fake_A = mmsize.ta ? new T[mmsize.bm * mmsize.bk] : nullptr;
             T* fake_B = mmsize.tb ? new T[mmsize.bk * mmsize.bn] : nullptr;
             int lda = mmsize.ta ? mmsize.bk : mmsize.lda;
@@ -447,6 +532,26 @@ static void v1(const T* A, const T* B, T* C, const MatmulSize& mmsize,
   }
 }                                                                   
 */
+static void rollback(const T* A, const T* B, T* C, const MatmulSize& mmsize,
+               const SmallKernels& kernels) {
+    std::cout << "tuning rollback to oneDNN" << std::endl;
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+/*
+    const char* const ftrans[] = {"N", "T", "C"};
+    int index_transa = mmsize.ta ? 1 : 0;
+    int index_transb = mmsize.tb ? 1 : 0;
+    mkldnn_sgemm(ftrans[index_transb], ftrans[index_transa], &mmsize.n, &mmsize.m, &mmsize.k, &alpha,
+                 B, &mmsize.ldb, A, &mmsize.lda, &beta, C, &mmsize.ldc);
+*/
+/*
+    char char_transa = mmsize.ta ? 'T' : 'N';
+    char char_transb = mmsize.tb ? 'T' : 'N';
+    tensorflow::MklDnnThreadPool eigen_tp(mmsize.ctx);
+    dnnl::threadpool_interop::sgemm(char_transa, char_transb, mmsize.m, mmsize.n, mmsize.k, alpha, A, mmsize.lda, B, mmsize.ldb,
+                    beta, C, mmsize.ldc, &eigen_tp);
+*/
+}
    FUNC_DEF_HEAD(v1) LOOP1 LOOP2 LOOP3 LOOP4 LOOPE FUNC_DEF_TAIL
    FUNC_DEF_HEAD(v2) LOOP1 LOOP2 LOOP4 LOOP3 LOOPE FUNC_DEF_TAIL
    FUNC_DEF_HEAD(v3) LOOP1 LOOP3 LOOP2 LOOP4 LOOPE FUNC_DEF_TAIL
@@ -692,7 +797,6 @@ public:
 
   void host_tune(bool flush_b, const T * a, const T * b, T * c)
   {
-//    std::lock_guard<std::mutex> lk(mMutex);
     ShowLog("start of   void host_tune(bool flush_b, const T * a, const T * b, T * c)");
     total_cycle_++;
     total_per_cycle_ = 0;
@@ -704,13 +808,25 @@ public:
       GetTuningSpace();
     }
 
+    get_env_cal(mmsize.vectorized, mmsize.packsize);
     std::string handle_name = "host_test-" + std::to_string(mmsize.m)
                               + "-" + std::to_string(mmsize.n)
                               + "-" + std::to_string(mmsize.k)
 			      + "-" + std::to_string(mmsize.ta) + std::to_string(mmsize.tb);
-    auto proxy_handle = GetHandleByName(handle_name);
-    auto my_host_proxy = HostOSTProxyManager::Instance().GetProxy(proxy_handle);
-
+    PROXY_HANDLE proxy_handle;
+    HostProxy::Ptr my_host_proxy;
+    ShowLog("handle_name " + handle_name);
+    char *dislock_env = getenv("TF_TUNING_DISLOCK");
+    if (dislock_env == nullptr) {
+          std::lock_guard<std::mutex> lk(mMutex);
+  	  proxy_handle = GetHandleByName(handle_name);
+  	  ShowLog("after GetHandleByName " + handle_name);
+  	  my_host_proxy = HostOSTProxyManager::Instance().GetProxy(proxy_handle);
+  	  ShowLog("after GetProxy " + handle_name);
+    } else {
+  	  proxy_handle = GetHandleByName(handle_name);
+  	  my_host_proxy = HostOSTProxyManager::Instance().GetProxy(proxy_handle);
+    }
     auto state = my_host_proxy->GetProxyState();
 
     if(state == HostProxy::State::UNINITIALIZED){
@@ -750,9 +866,9 @@ public:
         int impl_id = this->space[IMPL].min_max_value[params[IMPL]];
         const MatmulImpl& matmulImpl = impl_list[impl_id];
 
-#ifdef USE_LIBXSMM
+#ifdef USE_GEMMK
 	// libxsmm with noblas (mnk)^1/3 <= 64
-	if ((double)mmsize.bm * mmsize.bn * mmsize.bk > 64.0*64*64) {
+	if ((roll_back == 0 && impl_id == 0) || (gemmkernel == 0 && (double)mmsize.bm * mmsize.bn * mmsize.bk > 64.0*64*64)) {
             return std::numeric_limits<Tt>::max();
 	}
 #endif
@@ -789,13 +905,9 @@ public:
         // Update kernel according to block size
         update_kernels(kernels, mmsize.bm, mmsize.bn);
 
-        //std::cout << "mmsize.bm/n/k = " << mmsize.bm << " " << mmsize.bn << " " << mmsize.bk << std::endl;
-        //std::cout << "mmsize.m/n/kgroups = " << mmsize.mgroups << " " << mmsize.ngroups << " " << mmsize.kgroups << std::endl;
-        //std::cout << "impl_id = " << impl_id << std::endl;
         // benchmark and record the best
         PerfStat stat = benchmark(matmulImpl.impl, mmsize, kernels,
                                   this->mmconfig.A, this->mmconfig.B, this->mmconfig.C, flush_b);
-        //std::cout << "impl_id = " << impl_id << " latency(best) = " << stat.avg_latency << "(" << best << ")" << std::endl;
         // Update the config.
         if (stat.avg_latency < best)
         {
@@ -803,20 +915,18 @@ public:
           mmconfig.mmsize = mmsize;
           mmconfig.kernels = kernels;
           mmconfig.impl = matmulImpl.impl;
+          //std::cout << "mmsize.bm/n/k = " << mmsize.bm << " " << mmsize.bn << " " << mmsize.bk << std::endl;
+          //std::cout << "mmsize.m/n/kgroups = " << mmsize.mgroups << " " << mmsize.ngroups << " " << mmsize.kgroups << std::endl;
+          //std::cout << "impl_id = " << impl_id << " latency(best) = " << stat.avg_latency << "(" << best << ")" << std::endl;
         }
 
         return stat.avg_latency;
       };
 
       std::string algo;
-      char *algo_env = getenv("TF_TUNING_ALGO");
-      if (algo_env == nullptr) {
-	algo = "GA"; 
-      } else {
-	algo = algo_env;
-      }
-      int gens = 50;
-      int pops = 20;
+      int gens, pops;
+      get_env_algo(algo, gens, pops);
+
       my_host_proxy->SetAlgorithm(algo.c_str(), gens, pops);
 
       for(auto param : space){
@@ -1079,7 +1189,7 @@ public:
 
   static void flush_cache(const T *buf, size_t size)
   {
-// //#pragma omp parallel for
+//#pragma omp parallel for
     for (size_t offset = 0; offset < size; offset += CACHELINE_SIZE / sizeof(T))
     {
       _mm_clflush(buf + offset);
@@ -1100,6 +1210,8 @@ private:
 
   void prepare_bm(int m, std::vector<int> &bm_list)
   {
+    prepare_bk(m, bm_list);
+    /*
     if (m < 32)
     {
       bm_list.push_back(m);
@@ -1115,18 +1227,19 @@ private:
       bm_list.push_back(48);
       bm_list.push_back(32);
     }
+    */
   }
 
   void prepare_bn(int n, std::vector<int> &bn_list)
   {
-    prepare_bm(n, bn_list);
+    prepare_bk(n, bn_list);
   }
 
   void prepare_bk(int k, std::vector<int> &bk_list)
   {
     // bk = 64, ...
     //int candidates[] = { 64, 96, 128, 160, 192, 224, 256, 384, 512 };
-    int candidates[] = {64, 128, 256, 512};
+    int candidates[] = {32, 48, 64, 96, 128, 256, 512};
     for (int i = 0; i < sizeof(candidates) / sizeof(int); ++i)
     {
       if (candidates[i] <= k)
@@ -1285,7 +1398,7 @@ private:
 
   void update_kernels(SmallKernels &kernels, int bm, int bn)
   {
-#ifndef USE_LIBXSMM
+#ifndef USE_GEMMK
     if (bm == 32)
     {
         SET_KERNELS_ENUM_BN(32)
@@ -1417,8 +1530,8 @@ private:
                      const T *A, const T *B, T *C,
                      bool flush_b)
   {
-    const int warmup_loops = 0;
-    const int benchmark_loops = 1;
+    int warmup_loops=0, benchmark_loops=1;
+    get_env_bench(warmup_loops, benchmark_loops);
 
     PerfStat perfStat;
     std::vector<Tt> latencies;
@@ -1434,7 +1547,8 @@ private:
         latencies.push_back(t.getTime());
       }
       if (flush_b) {
-        flush_cache(B, mmsize.k * mmsize.ldb);
+        int b_cnt = mmsize.tb? mmsize.n * mmsize.ldb : mmsize.k * mmsize.ldb;
+        flush_cache(B, b_cnt);
       }
     }
 

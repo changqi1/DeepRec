@@ -7,9 +7,9 @@
 #include <immintrin.h>
 #include <emmintrin.h>
 
-#define USE_LIBXSMM
+#define USE_GEMMK
 
-#ifndef USE_LIBXSMM
+#ifndef USE_GEMMK
 
 
 #define INDEX(x, y, ld) ((x) * (ld) + (y))
@@ -1271,12 +1271,12 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
 
 } // end namespace lbf
 
-#endif //ndef USE_LIBXSMM
+#endif //ndef USE_GEMMK
 
 
 template<int M, int N, int K, int lda, int ldb, int ldc, bool ACC>
 void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
-#ifndef USE_LIBXSMM
+#ifndef USE_GEMMK
   constexpr const int COLS = N / 16;
 
   if constexpr (COLS <= 4) {
@@ -1289,7 +1289,7 @@ void small_gemm_fixmnk_fixldabc(const float *A, const float *B, float *C) {
 
 template<int M, int N, bool ACC>
 void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int K) {
-#ifndef USE_LIBXSMM
+#ifndef USE_GEMMK
   constexpr const int COLS = N / 16;
 
   if constexpr (COLS <= 4) {
@@ -1302,7 +1302,7 @@ void small_gemm_fixmn(const float *A, const float *B, float *C, int lda, int ldb
 
 template<int N, bool ACC>
 void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int M, int K) {
-#ifndef USE_LIBXSMM
+#ifndef USE_GEMMK
   constexpr const int COLS = N / 16;
 
   if constexpr (COLS <= 4) {
@@ -1315,7 +1315,7 @@ void small_gemm_fixn(const float *A, const float *B, float *C, int lda, int ldb,
 
 template<int M, bool ACC>
 void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int N, int K) {
-#ifndef USE_LIBXSMM
+#ifndef USE_GEMMK
   constexpr const int max_supported_cols = 8;
   auto COLS = (N + 15) / 16;
 
@@ -1367,7 +1367,7 @@ void small_gemm_fixm(const float *A, const float *B, float *C, int lda, int ldb,
 
 template<bool ACC>
 void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb, int ldc, int M, int N, int K) {
-#ifndef USE_LIBXSMM
+#ifndef USE_GEMMK
   constexpr const int max_supported_cols = 8;
   auto COLS = (N + 15) / 16;
 
@@ -1417,11 +1417,13 @@ void small_gemm_nofix(const float *A, const float *B, float *C, int lda, int ldb
 #endif
 }
 
-#ifdef USE_LIBXSMM
+#ifdef USE_GEMMK
 
 #include "libxsmm.h"
+int gemmkernel;
+int roll_back;
+
 void small_gemm_libxsmm(bool transa, bool transb, const float *A, const float *B, float *C, int lda, int ldb, int ldc, int M, int N, int K, bool ACC) {
-  assert((double)M * (double)N * (double)K <= 64.0 * 64.0 * 64.0); // libxsmm with noblas
   float alpha = 1.0, beta = 0.0;
   if (ACC) {
         beta = 1.0;
@@ -1432,6 +1434,17 @@ void small_gemm_libxsmm(bool transa, bool transb, const float *A, const float *B
         ta[0] = 'T';
   if (transb)
         tb[0] = 'T';
-  libxsmm_sgemm(tb, ta, &N, &M, &K, &alpha, B, &ldb, A, &lda, &beta, C, &ldc);
+  if (gemmkernel == 0 || (M <= 64 && N <= 64 && K<=64)) {
+  	libxsmm_sgemm(tb, ta, &N, &M, &K, &alpha, B, &ldb, A, &lda, &beta, C, &ldc);
+  } else if (gemmkernel == 1) {
+	assert(0);
+//  	dnnl_sgemm(ta[0], tb[0], M, N, K, alpha, A, lda, B, ldb,
+//                    beta, C, ldc);
+  } else {
+  	mkldnn_sgemm(tb, ta, &N, &M, &K, &alpha, B, &ldb, A, &lda,
+                    &beta, C, &ldc);
+//  	dnnl::threadpool_interop::sgemm(ta[0], tb[0], M, N, K, alpha, A, lda, B, ldb,
+//                    beta, C, ldc, nullptr);
+  }
 }
 #endif

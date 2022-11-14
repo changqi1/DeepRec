@@ -31,9 +31,6 @@ limitations under the License.
 #include "tensorflow/core/kernels/fill_functor.h"
 #include "tensorflow/core/util/env_var.h"
 
-#include "tunable_matmul.h"
-#define TUNED_CONFIG_FILE "./tuned"
-
 // This header file is part of MKL ML, need equivalent file in MKL DNN
 #ifndef INTEL_MKL_DNN_ONLY
 #include "mkl_cblas.h"
@@ -41,43 +38,47 @@ limitations under the License.
 #include "mkldnn.h"
 #endif
 
+#include "tunable_matmul.h"
+#define TUNED_CONFIG_FILE "./tuned"
+
 const MatmulImpl TunableMatmul::impl_list[] = {
+    {"v0", rollback},
     {"v1", v1},
-     {"v2", v2},
-     {"v3", v3},
-     {"v4", v4},
-     {"v5", v5},
-     {"v6", v6},
-     {"v7", v7},
-     {"v8", v8},
-     {"v9", v9},
-     {"v10", v10},
-     {"v11", v11},
-     {"v12", v12},
-     {"v13", v13},
-     {"v14", v14},
-     {"v15", v15},
-     {"v16", v16},
-     {"v17", v17},
-     {"v18", v18},
-     {"v19", v19},
-     {"v20", v20},
-     {"v21", v21},
-     {"v22", v22},
-     {"v23", v23},
-     {"v24", v24},
-     {"v100", v100},
-     {"v101", v101},
-     {"v102", v102},
-     {"v103", v103},
-     {"v104", v104},
-     {"v105", v105},
-     {"v106", v106},
-     {"v107", v107},
-     {"v108", v108},
-     {"v109", v109},
-     {"v110", v110},
-     {"v111", v111},
+    {"v2", v2},
+    {"v3", v3},
+    {"v4", v4},
+    {"v5", v5},
+    {"v6", v6},
+    {"v7", v7},
+    {"v8", v8},
+    {"v9", v9},
+    {"v10", v10},
+    {"v11", v11},
+    {"v12", v12},
+    {"v13", v13},
+    {"v14", v14},
+    {"v15", v15},
+    {"v16", v16},
+    {"v17", v17},
+    {"v18", v18},
+    {"v19", v19},
+    {"v20", v20},
+    {"v21", v21},
+    {"v22", v22},
+    {"v23", v23},
+    {"v24", v24},
+    {"v100", v100},
+    {"v101", v101},
+    {"v102", v102},
+    {"v103", v103},
+    {"v104", v104},
+    {"v105", v105},
+    {"v106", v106},
+    {"v107", v107},
+    {"v108", v108},
+    {"v109", v109},
+    {"v110", v110},
+    {"v111", v111},
     {"", nullptr},
 };
 
@@ -176,7 +177,6 @@ class MklMatMulOp : public OpKernel {
     tune_on &= !(tune_dissml_ && (m < 64 || n < 64 || k < 64));
     tune_on &= !(tune_dislge_ && (m > 25600 || n > 25600 || k > 25600));
 
-//    if(tune_ && std::is_same<T, float>::value && m >= 64 && n >= 64 && k >= 64) {
     if(tune_on && std::is_same<T, float>::value) {
     	std::cout << " tune mnk " << m << " " << n << " " << k << " transab " << transpose_a << transpose_b << " float  " << std::is_same<T, float>::value << std::endl; 
     	tmm_->SetThreadPool(&ctx->template eigen_device<Device>());
