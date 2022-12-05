@@ -8,7 +8,7 @@
 
 我们目前线上部署的docker的硬件配置：CPU为skylake/icelake，skylake较多。容器一般申请20个core。skylake的内存为DDR4，实测内存总带宽有70GB/s和102GB/s两种配置。
 
-docker文件单独给出，Dockerfile可供参考。
+本目录下的Dockerfile可供参考,可以直接build。
 
 # 运行方法
 
