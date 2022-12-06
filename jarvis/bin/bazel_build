@@ -1,0 +1,163 @@
+#!/bin/bash
+
+default_opts="--remote_cache=http://crt-e302.sh.intel.com:9092 \
+             --cxxopt=-D_GLIBCXX_USE_CXX11_ABI=0 \
+             --copt=-O2 \
+             --copt=-Wformat \
+             --copt=-Wformat-security \
+             --copt=-fstack-protector \
+             --copt=-fPIC \
+             --copt=-fpic \
+             --linkopt=-znoexecstack \
+             --linkopt=-zrelro \
+             --linkopt=-znow \
+             --linkopt=-fstack-protector"
+
+mkl_opts="--config=mkl_threadpool \
+           --define build_with_mkl_dnn_v1_only=true \
+           --copt=-DENABLE_INTEL_MKL_BFLOAT16 \
+           --copt=-march=skylake-avx512"
+
+test_opts="--nocache_test_results \
+           --test_output=all \
+           --verbose_failures \
+           --test_verbose_timeout_warnings \
+           --flaky_test_attempts 1 \
+           --test_timeout 99999999 \
+           --test_size_filters=small,medium,large,enormous \
+           -c opt \
+           --keep_going"
+
+test_targets="//tensorflow/core/kernels:mkl_aggregate_ops_test \
+              //tensorflow/core/kernels:mkl_batch_matmul_op_test \
+              //tensorflow/core/kernels:mkl_concat_op_test \
+              //tensorflow/core/kernels:mkl_cwise_ops_test \
+              //tensorflow/core/kernels:mkl_fused_batch_norm_op_test \
+              //tensorflow/core/kernels:mkl_identity_op_test \
+              //tensorflow/core/kernels:mkl_lrn_op_test \
+              //tensorflow/core/kernels:mkl_matmul_op_test \
+              //tensorflow/core/kernels:mkl_relu_op_test \
+              //tensorflow/core/kernels:mkl_reshape_op_test \
+              //tensorflow/core/kernels:mkl_slice_op_test \
+              //tensorflow/core/kernels:mkl_softmax_op_test \
+              //tensorflow/core/kernels:mkl_transpose_op_test"
+
+BM_targets="//tensorflow/core/kernels:mkl_aggregate_ops_test \
+            //tensorflow/core/kernels:mkl_batch_matmul_op_test \
+            //tensorflow/core/kernels:mkl_concat_op_test \
+            //tensorflow/core/kernels:mkl_cwise_ops_test \
+            //tensorflow/core/kernels:mkl_fused_batch_norm_op_test \
+            //tensorflow/core/kernels:mkl_identity_op_test \
+            //tensorflow/core/kernels:mkl_lrn_op_test \
+            //tensorflow/core/kernels:mkl_matmul_op_test \
+            //tensorflow/core/kernels:mkl_matmul_op_test \
+            //tensorflow/core/kernels:mkl_relu_op_test \
+            //tensorflow/core/kernels:mkl_reshape_op_test \
+            //tensorflow/core/kernels:mkl_slice_op_test \
+            //tensorflow/core/kernels:mkl_softmax_op_test \
+            //tensorflow/core/kernels:mkl_transpose_op_test"
+
+function get_target_name() {
+  echo $1 | awk -F ':' '{print $2}'
+}
+function cpu_build() {
+  yes "" | ./configure \
+  && bazel build ${default_opts} ${mkl_opts} \
+       //tensorflow/tools/pip_package:build_pip_package \
+  && mkdir -p ./wheels/tensorflow \
+  && bazel-bin/tensorflow/tools/pip_package/build_pip_package --project_name tensorflow ${_}
+}
+
+function cpu_bazel_test_UT() {
+  yes "" | ./configure \
+  && bazel test ${default_opts} ${mkl_opts} ${test_opts} \
+     -- ${test_targets}
+}
+
+function cpu_bazel_test_BM() {
+  test_options="--test_arg=--benchmarks=all"
+  yes "" | ./configure
+  for test_target in ${BM_targets[@]}; do
+    target_name=$(get_target_name $test_target)
+    bazel test ${default_opts} ${mkl_opts} \
+      ${test_opts} ${test_options} \
+      -- ${test_target} > $target_name.log 2>&1
+  done
+}
+
+function cpu_prod_env_test() {
+  cd ./wheels/tensorflow \
+  && pip install `ls` \
+  && python -c "import tensorflow as tf; print(tf.__version__)"
+}
+
+function gpu_build() {
+  yes "" | ./configure \
+  && bazel build \
+       --config=noaws \
+       --config=nogcp \
+       --config=cuda \
+       --config=xla \
+       --verbose_failures \
+       --cxxopt="-D_GLIBCXX_USE_CXX11_ABI=0" \
+       --copt="-march=skylake-avx512" \
+       --copt="-Wno-sign-compare" \
+      //tensorflow/tools/pip_package:build_pip_package \
+  && mkdir -p ./wheels/tensorflow \
+  && bazel-bin/tensorflow/tools/pip_package/build_pip_package --gpu --project_name tensorflow ${_}
+}
+
+function gpu_bazel_test() {
+  echo "start gpu_bazel_test..."
+  sleep 10
+  echo "end..."
+}
+
+function gpu_prod_env_test() {
+  cd ./wheels/tensorflow \
+  && pip install `ls` \
+  && python -c "import tensorflow as tf; print(\"NUM GPUs Available: \", len(tf.config.experimental.list_physical_devices('GPU')))"
+}
+
+function usage() {
+echo "Usage:"
+echo "  ./bazel_build [cpu, gpu, cpu_prod_env_test, gpu_prod_env_test]"
+echo "  Commands:"
+echo "    cpu: build pai tensorflow for cpu version"
+echo "    gpu: build pai tensorflow for gpu version"
+echo "    cpu_build_with_bazel_test: build pai tensorflow and run bazel test"
+echo "    gpu_build_with_bazel_test: build pai tensorflow and run bazel test"
+echo "    cpu_prod_env_test: test pai tensorflow whl package in production env"
+echo "    gpu_prod_env_test: test pai tensorflow whl package in production env"
+}
+
+case $1 in
+  "cpu")
+    cpu_build;;
+
+  "UT")
+    cpu_bazel_test_UT;;
+
+  "BM")
+    cpu_bazel_test_BM;;
+
+  "cpu_build_with_bazel_test")
+    cpu_build \
+    && cpu_bazel_test;;
+
+  "gpu")
+    gpu_build;;
+
+  "gpu_build_with_bazel_test")
+    gpu_build \
+    && gpu_bazel_test;;
+
+  "cpu_prod_env_test")
+    cpu_prod_env_test;;
+
+  "gpu_prod_env_test") 
+    gpu_prod_env_test;;
+
+  *)
+    usage;;
+esac
