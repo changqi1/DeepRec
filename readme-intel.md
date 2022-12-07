@@ -4,6 +4,9 @@
 
 ## Quick start
 ``` shell
+#下载模型文件
+wget https://github.com/ultralytics/yolov5/releases/download/v4.0/yolov5m.pt
+
 # 服务端启动
 CI_DOCKER_EXTRA_PARAMS=-it ./ci_build bash run.sh
 
