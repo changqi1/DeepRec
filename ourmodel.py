@@ -44,7 +44,7 @@ class AlimamaYolo(object):
             model.half()  # to FP16
 
         import intel_extension_for_pytorch as ipex
-        model = ipex.optimize(model)
+        model = ipex.optimize(model, dtype=torch.bfloat16)
 
         self.model = model
         self.opt = opt
@@ -65,7 +65,7 @@ class AlimamaYolo(object):
         img = np.ascontiguousarray(img)
 
         img = torch.from_numpy(img)#.to(device)
-        img = img.half() if self.half else img.float()  # uint8 to fp16/32
+        img = img.bfloat16()  # uint8 to fp16/32/bf16
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
         if img.ndimension() == 3:
             img = img.unsqueeze(0)
