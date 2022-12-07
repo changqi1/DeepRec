@@ -42,6 +42,10 @@ class AlimamaYolo(object):
         self.half = device.type != 'cpu'  # half precision only supported on CUDA
         if self.half:
             model.half()  # to FP16
+
+        import intel_extension_for_pytorch as ipex
+        model = ipex.optimize(model)
+
         self.model = model
         self.opt = opt
         self.stride = stride

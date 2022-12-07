@@ -12,7 +12,8 @@ python3 client.py --max=1000 --pool_size=20
 ```
 
 ## Performance
-|                 | QPS | Latency(ms) |
-| --------------- | --- | ----------- |
-| baseline(Ali)   | 18  | 700         |
-| baseline(Icx08) | 18  | 1000        |
+|                      | QPS | Latency(ms) |
+| -------------------- | --- | ----------- |
+| baseline(Ali)        | 18  | 700         |
+| baseline(Icx08)      | 18  | 1000        |
+| baseline(Icx08+ipex) | 23  | 800         |
