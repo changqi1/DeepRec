@@ -21,3 +21,4 @@ python3 client.py --max=1000 --pool_size=20
 | baseline(Icx08)           | 18  | 1000        |
 | baseline(Icx08+ipex)      | 23  | 800         |
 | baseline(Icx08+ipex+Bf16) | 6   | 2880        |
+| baseline(Icx08+ipex+Int8) | 19  | 1000        |

@@ -43,8 +43,19 @@ class AlimamaYolo(object):
         if self.half:
             model.half()  # to FP16
 
+        data = torch.rand(1, 3, 640, 640)
+
+        #################### code changes ####################
         import intel_extension_for_pytorch as ipex
-        model = ipex.optimize(model, dtype=torch.bfloat16)
+        conf = ipex.quantization.QuantConf(qscheme=torch.per_tensor_affine)
+
+        # conf will be updated with observed statistics during calibrating with the dataset
+        with ipex.quantization.calibrate(conf):
+            model(data)
+
+        with torch.no_grad():
+            model = ipex.quantization.convert(model, conf, data)
+        ######################################################
 
         self.model = model
         self.opt = opt
@@ -65,14 +76,14 @@ class AlimamaYolo(object):
         img = np.ascontiguousarray(img)
 
         img = torch.from_numpy(img)#.to(device)
-        img = img.bfloat16()  # uint8 to fp16/32/bf16
+        img = img.float()  # uint8 to fp16/32/bf16
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
         if img.ndimension() == 3:
             img = img.unsqueeze(0)
 
         # run inference
         t1 = time_synchronized()
-        pred = self.model(img, augment=False)[0]
+        pred = self.model(img)[0]
 
         # Apply NMS
         pred = non_max_suppression(pred, self.opt.conf_thres, self.opt.iou_thres)
