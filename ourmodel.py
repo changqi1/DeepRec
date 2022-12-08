@@ -45,19 +45,21 @@ class AlimamaYolo(object):
 
         data = torch.rand(1, 3, 640, 640)
 
-        #################### code changes ####################
         import intel_extension_for_pytorch as ipex
-        conf = ipex.quantization.QuantConf(qscheme=torch.per_tensor_affine)
+        from intel_extension_for_pytorch.quantization import prepare, convert
 
-        # conf will be updated with observed statistics during calibrating with the dataset
-        with ipex.quantization.calibrate(conf):
-            model(data)
+        qconfig = ipex.quantization.default_static_qconfig
+        prepared_model  = prepare(model, qconfig, example_inputs=data, inplace=False)
+        prepared_model(data)
+        convert_model = convert(prepared_model)
 
         with torch.no_grad():
-            model = ipex.quantization.convert(model, conf, data)
-        ######################################################
+            traced_model = torch.jit.trace(convert_model, data)
+            traced_model = torch.jit.freeze(traced_model)
 
-        self.model = model
+        # traced_model.save("quantized_model.pt")
+
+        self.model = traced_model
         self.opt = opt
         self.stride = stride
 
