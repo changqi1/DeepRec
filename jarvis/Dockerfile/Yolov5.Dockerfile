@@ -53,9 +53,9 @@ RUN /usr/local/bin/pip3 install  --no-cache-dir protobuf==3.11.3 pandas tqdm PyY
 
 RUN sudo ldconfig
 # PyTorch
-RUN /usr/local/bin/pip3 install --no-cache-dir torch
-RUN /usr/local/bin/pip3 install --no-cache-dir torchvision
-RUN /usr/local/bin/pip3 install intel-extension-for-pytorch
-RUN /usr/local/bin/pip3 install matplotlib tensorboard
-RUN /usr/local/bin/pip3 install torch-tb-profiler
 
+RUN /usr/local/bin/pip3 install --no-cache-dir torch==1.13.1 torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
+RUN /usr/local/bin/pip3 install intel-extension-for-pytorch==1.13.0
+# RUN /usr/local/bin/pip3 install matplotlib tensorboard
+# RUN /usr/local/bin/pip3 install torch-tb-profiler
+RUN /usr/local/bin/pip3 install neural-compressor==2.0

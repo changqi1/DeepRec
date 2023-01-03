@@ -7,7 +7,8 @@
 # Modify Date: 2022-12-02 16:17
 # Function: 
 #***************************************************************#
-
+import os
+import argparse
 from tornado.httpserver import HTTPServer
 import tornado.web
 import tornado
@@ -17,8 +18,8 @@ from make_app import make_app, on_process_start
 router = tornado.routing.RuleRouter([
     tornado.routing.Rule(tornado.routing.PathMatches(r"/.*"), make_app()),
 ])
+num_processes = int(os.getenv("http_process", 20))
 
-num_processes = 20
 server = HTTPServer(router, max_header_size=int(1e10), max_body_size=int(1e10))
 server.listen(8888)
 #util_logger.info("listening on port: {port}, num_processes: {num_processes}".format(

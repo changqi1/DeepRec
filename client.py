@@ -54,16 +54,27 @@ parser.add_argument("--pool_size", default=16, type=int)
 parser.add_argument("--max", default=200, type=int)
 args, _ = parser.parse_known_args()
 
+args.pool_size = int(os.getenv("http_process", 20))
+
+warmup_urls = []
+for i in range(args.pool_size):
+  warmup_urls.append('/')
+
 urls = []
 for i in range(args.max):
   urls.append('/')
 pool = ThreadPool(args.pool_size)
 
-#while True:
-print('########total len ', len(urls))
+results = pool.map(func, warmup_urls)
+
 tic = time.time()
 results = pool.map(func, urls)
 costTime = time.time()-tic  # 总耗时
 rts = [r for r in results if r != None]
-print('total time ', costTime, 's, qps:', len(urls) / costTime)
-print('avg rt:', sum(rts)/len(rts))
+
+print()
+print(">" * 15, "marvin test", ">" * 15)
+print('>>>marvin: total time ', costTime, 's, qps:', len(urls) / costTime)
+print('>>>marvin: avg rt:', sum(rts)/len(rts))
+print("<" * 15, "marvin test", "<" * 15)
+print()
