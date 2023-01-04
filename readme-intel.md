@@ -16,15 +16,16 @@ python3 client.py --max=1000 --pool_size=20
 ```
 
 ## Performance
-|                               | QPS | Latency(ms) |
-| ----------------------------- | --- | ----------- |
-| baseline(Ali)                 | 18  | 700         |
-| baseline(Icx08)               | 18  | 1000        |
-| baseline(Icx08+ipex)          | 23  | 800         |
-| baseline(Icx08+ipex+Bf16)     | 6   | 2880        |
-| baseline(Icx08+ipex+Int8)     | 26  | 744         |
-| baseline(Icx08+inc+Int8)      | 39  | 480         |
-| baseline(Icx08+OpenVINO+Int8) | 32  | 590         |
+|                                | QPS | Latency(ms) |
+| ------------------------------ | --- | ----------- |
+| baseline(Ali)                  | 18  | 700         |
+| baseline(Icx08)                | 18  | 1000        |
+| baseline(Icx08+ipex)           | 23  | 800         |
+| baseline(Icx08+ipex+Bf16)      | 6   | 2880        |
+| baseline(Icx08+ipex+Int8)      | 26  | 744         |
+| baseline(Icx08+OpenVINO+Int8)  | 32  | 590         |
+| baseline(Icx08+inc+Int8)       | 39  | 480         |
+| baseline(Archerspr02+inc+Int8) | 56  | 340         |
 
 ## Test case
 测试需求: 在20vcpu条件下测试尽可能多的QPS.
