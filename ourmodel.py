@@ -99,6 +99,8 @@ class AlimamaYolo(object):
 
         if opt.ipex and opt.dtype == "int8":
             data = torch.rand(1, 3, 640, 640)
+            data = data.to(memory_format=torch.channels_last)
+            model = model.to(memory_format=torch.channels_last)
             import intel_extension_for_pytorch as ipex
             from intel_extension_for_pytorch.quantization import prepare, convert
 
@@ -110,8 +112,13 @@ class AlimamaYolo(object):
             with torch.no_grad():
                 traced_model = torch.jit.trace(convert_model, data)
                 model = torch.jit.freeze(traced_model)
+                # warm up
+                for i in range(3):
+                    y = model(data)
 
         if opt.inc:
+            torch.backends.quantized.engine = 'onednn'
+            model = model.to(memory_format=torch.channels_last)
             from neural_compressor.config import PostTrainingQuantConfig
             from neural_compressor.data.dataloaders.dataloader import DataLoader
             from neural_compressor.data import Datasets
@@ -145,6 +152,7 @@ class AlimamaYolo(object):
         if img.ndimension() == 3:
             img = img.unsqueeze(0)
 
+        img = img.to(memory_format=torch.channels_last)
         # run inference
         t1 = time_synchronized()
         if self.opt.openvino and self.opt.dtype == "int8":
@@ -155,7 +163,7 @@ class AlimamaYolo(object):
                 with torch.cpu.amp.autocast():
                     pred = self.model(img, augment=False)[0]
         else:
-            pred = self.model(img, augment=False)[0]
+            pred = self.model(img)[0]
             # pred = profile(self.model, img)
 
         # Apply NMS
