@@ -4194,6 +4194,35 @@ tf_cc_test_mkl(
     ],
 )
 
+tf_mkl_kernel_library(
+    name = "mkl_matmul_fused_with_reshape_op",
+    srcs = [
+        "mkl_matmul_fused_with_reshape_op.cc",
+    ],
+    hdrs = ["mkl_matmul_ops_common.h"],
+    deps = MATH_DEPS + mkl_deps(),
+)
+
+tf_cc_test_mkl(
+    name = "mkl_matmul_fused_with_reshape_op_test",
+    size = "large",
+    srcs = ["mkl_matmul_fused_with_reshape_op_test.cc",],
+    deps = [
+        ":ops_testutil",
+        ":ops_util",
+        ":mkl_matmul_fused_with_reshape_op",
+        "//tensorflow/cc:cc_ops",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:framework_internal",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:tensorflow",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+    ],
+)
+
 tf_kernel_library(
     name = "fused_layer_normalize_ops",
     srcs = [

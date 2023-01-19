@@ -219,6 +219,33 @@ struct ContractionWithBiasAndAddActivation {
   int port_id = 0;
   int activation = kMissingIndex;
 };
+
+// Matmul node followed by a Reshape, BiasAdd,.
+struct MatMulWithReshapeAndBias {
+  MatMulWithReshapeAndBias() = default;
+  MatMulWithReshapeAndBias(int matmul, int reshape, int bias_add)
+      : matmul(matmul), reshape(reshape), bias_add(bias_add) {}
+
+  int matmul = kMissingIndex;
+  int reshape = kMissingIndex;
+  int bias_add = kMissingIndex;
+};
+
+// Matmul node followed by a Reshape, BiasAdd, and Relu.
+struct MatMulWithReshapeAndBiasActivation {
+  MatMulWithReshapeAndBiasActivation() = default;
+  MatMulWithReshapeAndBiasActivation(int matmul, int reshape, int bias_add,
+                                     int activation)
+      : matmul(matmul),
+        reshape(reshape),
+        bias_add(bias_add),
+        activation(activation) {}
+
+  int matmul = kMissingIndex;
+  int reshape = kMissingIndex;
+  int bias_add = kMissingIndex;
+  int activation = kMissingIndex;
+};
 #endif  // INTEL_MKL
 
 #ifndef INTEL_MKL
@@ -875,6 +902,74 @@ bool FindContractionWithBiasAndAddActivation(
 
   return true;
 }
+
+bool FindMatMulWithReshapeAndBias(const RemapperContext& ctx, int node_index,
+                                  MatMulWithReshapeAndBias& matched) {
+  const auto* node_view = ctx.graph_view.GetNode(node_index);
+  // Root of the pattern must be a Biasadd.
+  // TODO: Forward controls for patterns with control dependencies.
+  if (HasControlFaninOrFanout(*node_view)) return false;
+  const auto* node_def = node_view->node();
+  if (!IsBiasAdd(*node_def)) return false;
+
+  // Input to the BiasAdd must be a Reshape.
+  if (node_view->NumRegularFanins() < 1) return false;
+  const auto& regular_fanin_0 = node_view->GetRegularFanin(0);
+  const auto* reshape_node_view = regular_fanin_0.node_view();
+  const auto* reshape_node_def = reshape_node_view->node();
+  if (HasControlFaninOrFanout(*reshape_node_view)) return false;
+  if (!IsReshape(*reshape_node_def)) return false;
+  
+
+  // First input to the Reshape must be a Matmul.
+  if (node_view->NumRegularFanins() < 1) return false;
+  const auto& reshape_regular_fanin_0 = reshape_node_view->GetRegularFanin(0);
+  const auto* matmul_node_view = reshape_regular_fanin_0.node_view();
+  const auto* matmul_node_def = matmul_node_view->node();
+    
+
+  if (!IsMatMul(*matmul_node_def) || !IsCpuCompatibleMatMul(matmul_node_def) ||
+      !HaveSameDataType(node_def, matmul_node_def) ||
+      HasControlFaninOrFanout(*matmul_node_view) ||
+      !HasAtMostOneFanoutAtPort0(*matmul_node_view) ||
+      IsInPreserveSet(ctx, matmul_node_def))
+    return false;
+
+  matched.bias_add = node_view->node_index();
+  matched.reshape = reshape_node_view->node_index();
+  matched.matmul = matmul_node_view->node_index();
+
+  return true;
+}
+
+bool FindMatMulWithReshapeAndBiasActivation(
+    const RemapperContext& ctx, int node_index,
+    MatMulWithReshapeAndBiasActivation& matched) {
+  const auto* node_view = ctx.graph_view.GetNode(node_index);
+  // Root of the pattern must be a Activation.
+  // TODO: Forward controls for patterns with control dependencies.
+  if (HasControlFaninOrFanout(*node_view)) return false;
+  const auto* node_def = node_view->node();
+  // if (!IsSupportedActivation(*node_def)) return false;
+  if (!IsRelu(*node_def)) return false;
+
+  // Input to the Activation must be a Matmul+Reshape+Biasadd pattern.
+  if (node_view->NumRegularFanins() < 1) return false;
+  const auto& regular_fanin_0 = node_view->GetRegularFanin(0);
+  const auto* biasadd_node_view = regular_fanin_0.node_view();
+  MatMulWithReshapeAndBias pattern;
+  if (!FindMatMulWithReshapeAndBias(ctx, biasadd_node_view->node_index(),
+                                    pattern))
+    return false;
+
+  matched.activation = node_view->node_index();
+  matched.matmul = pattern.matmul;
+  matched.reshape = pattern.reshape;
+  matched.bias_add = pattern.bias_add;
+
+  return true;
+}
+
 #endif
 
 bool FindFusedBatchNorm(const RemapperContext& ctx, int node_index,
@@ -1163,6 +1258,17 @@ void SetFusedOpAttributes(NodeDef* fused,
   SetAttrValue(fused_ops, &(*attr)["fused_ops"]);
   SetAttrValue(num_args, &(*attr)["num_args"]);
   SetAttrValue(epsilon, &(*attr)["epsilon"]);  // required only for BatchNorm
+}
+
+void SetFusedOpAttributes(NodeDef* fused,
+                          const absl::Span<const absl::string_view> fused_ops,
+                          bool epsilon_required, int num_args = 1,
+                          float epsilon = 0.0) {
+  auto* attr = fused->mutable_attr();
+  SetAttrValue(fused_ops, &(*attr)["fused_ops"]);
+  SetAttrValue(num_args, &(*attr)["num_args"]);
+  if (epsilon_required)
+    SetAttrValue(epsilon, &(*attr)["epsilon"]);  // required only for BatchNorm
 }
 
 bool FindMatMulWithBiasAndAGelu(RemapperContext* ctx, int node_index,
@@ -1670,6 +1776,48 @@ Status AddFusedContractionNode(
 
   return Status::OK();
 }
+
+Status AddFusedContractionNode(
+    RemapperContext* ctx, const MatMulWithReshapeAndBiasActivation& matched,
+    std::vector<bool>* invalidated_nodes, std::vector<bool>* nodes_to_delete) {
+  const GraphDef* graph     = ctx->graph_view.graph();
+  const NodeDef& matmul     = graph->node(matched.matmul);
+  const NodeDef& reshape    = graph->node(matched.reshape);
+  const NodeDef& bias_add   = graph->node(matched.bias_add);
+  const NodeDef& activation = graph->node(matched.activation);
+
+  NodeDef fused_matmul;
+  fused_matmul.set_name(activation.name());
+  fused_matmul.set_op("_MklFusedMatMulWithReshape");
+  fused_matmul.set_device(matmul.device());
+  fused_matmul.add_input(matmul.input(0));    // 0: input a
+  fused_matmul.add_input(matmul.input(1));    // 1: input b
+  fused_matmul.add_input(reshape.input(1));   // 2: reshape_to
+  fused_matmul.add_input(bias_add.input(1));  // 3: bias
+
+  CopyMatMulAttributes(matmul, &fused_matmul);
+
+  auto* attr = fused_matmul.mutable_attr();
+  SetFusedOpAttributes(&fused_matmul, {"Reshape", "BiasAdd", activation.op()},
+                       false);
+  SetAttrValue("MklNameChangeOp", &(*attr)["_kernel"]);
+
+  auto& reshape_attr = reshape.attr();
+  (*attr)["Tshape"] = reshape_attr.at("Tshape");
+
+  utils::Mutation* mutation = ctx->graph_view.GetMutationBuilder();
+  Status status;
+  mutation->AddNode(std::move(fused_matmul), &status);
+  TF_RETURN_IF_ERROR(status);
+  TF_RETURN_IF_ERROR(mutation->Apply());
+
+  (*invalidated_nodes)[matched.activation] = true;
+  (*nodes_to_delete)[matched.matmul]       = true;
+  (*nodes_to_delete)[matched.reshape]      = true;
+  (*nodes_to_delete)[matched.bias_add]     = true;
+
+  return Status::OK();
+}
 #endif
 
 Status AddFusedBatchNormExNode(RemapperContext* ctx,
@@ -2128,6 +2276,7 @@ Status Remapper::Optimize(Cluster* cluster, const GrapplerItem& item,
       ContractionWithBiasAddAndAdd contract_with_bias_and_add;
       ContractionWithBiasAndAddActivation contract_with_bias_and_add_activation;
       ContractionWithMul contract_with_mul;
+      MatMulWithReshapeAndBiasActivation matmul_with_reshape_and_bias_activation;
 
       if (!item.optimization_options().is_eager_mode) {
         // Remap Conv2D+BiasAdd+Add+relu into the _FusedConv2D.
@@ -2175,6 +2324,17 @@ Status Remapper::Optimize(Cluster* cluster, const GrapplerItem& item,
               &ctx, node_label_to_index, &invalidated_nodes, false));
           continue;
         };
+
+        // MatMul + Reshape + BiasAdd + Activation
+        if (allow_non_differentiable_rewrites &&
+            MklLayoutPassLists::FindFusedMatMul() &&
+            FindMatMulWithReshapeAndBiasActivation(
+                ctx, i, matmul_with_reshape_and_bias_activation)) {
+          TF_RETURN_IF_ERROR(AddFusedContractionNode(
+              &ctx, matmul_with_reshape_and_bias_activation, &invalidated_nodes,
+              &nodes_to_delete));
+          continue;
+        }
       }
     }
 #endif  //! INTEL_MKL
