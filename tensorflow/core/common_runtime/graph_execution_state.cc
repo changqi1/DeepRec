@@ -1010,58 +1010,61 @@ Status GraphExecutionState::OptimizeGraph(
       item.fetch.push_back(tensor_connection.from_tensor());
     }
 
-    if (!(options.callable_options.feed().empty() &&
-          options.callable_options.tensor_connection().empty())) {
-      std::unordered_set<string> feeds;
-      for (const string& feed : options.callable_options.feed()) {
-        TensorId id = ParseTensorName(feed);
-        if (id.second != 0) {
-          return errors::InvalidArgument("Unsupported feed: ", feed);
-        }
-        feeds.emplace(id.first);
-      }
-      for (const TensorConnection& tensor_connection :
-           options.callable_options.tensor_connection()) {
-        TensorId id = ParseTensorName(tensor_connection.to_tensor());
-        if (id.second != 0) {
-          return errors::InvalidArgument("Unsupported feed: ",
-                                         tensor_connection.to_tensor());
-        }
-        feeds.emplace(id.first);
-      }
-      for (const Node* node : graph_->nodes()) {
-        if (feeds.find(node->name()) == feeds.end()) {
-          continue;
-        }
-        // Get the type and shape of the feed node.
-        PartialTensorShape partial_shape;
-        DataType type;
-        TF_RETURN_IF_ERROR(GetFeedShapeAndTypeFromAttribute(
-            node->def(), &partial_shape, &type));
-        // If the shape of the placeholder is only partially known, we are free
-        // to set unknown dimensions of its shape to any value we desire. We
-        // choose 0 to minimize the memory impact. Note that this only matters
-        // if an optimizer chooses to run the graph.
-        TensorShape shape;
-        if (partial_shape.unknown_rank()) {
-          shape = TensorShape({0});
-        } else {
-          for (int i = 0; i < partial_shape.dims(); ++i) {
-            if (partial_shape.dim_size(i) < 0) {
-              partial_shape.set_dim(i, 0);
-            }
-          }
-          if (!partial_shape.AsTensorShape(&shape)) {
-            return errors::InvalidArgument(
-                "Could not derive shape for feed node: ",
-                node->def().DebugString());
-          }
-        }
+    // XXX: disabled for special case.
+    // if (!(options.callable_options.feed().empty() &&
+    //       options.callable_options.tensor_connection().empty())) {
+    //   std::unordered_set<string> feeds;
+    //   for (const string& feed : options.callable_options.feed()) {
+    //     TensorId id = ParseTensorName(feed);
+    //     if (id.second != 0) {
+    //       return errors::InvalidArgument("Unsupported feed: ", feed);
+    //     }
+    //     feeds.emplace(id.first);
+    //   }
+    //   for (const TensorConnection& tensor_connection :
+    //        options.callable_options.tensor_connection()) {
+    //     TensorId id = ParseTensorName(tensor_connection.to_tensor());
+    //     if (id.second != 0) {
+    //       printf("[Debug] XXXXXXXXXX\n");
+    //       return errors::InvalidArgument("Unsupported feed: ",
+    //                                      tensor_connection.to_tensor());
+    //     }
+    //     feeds.emplace(id.first);
+    //   }
+    //   for (const Node* node : graph_->nodes()) {
+    //     if (feeds.find(node->name()) == feeds.end()) {
+    //       continue;
+    //     }
+    //     // Get the type and shape of the feed node.
+    //     PartialTensorShape partial_shape;
+    //     DataType type;
+    //     TF_RETURN_IF_ERROR(GetFeedShapeAndTypeFromAttribute(
+    //         node->def(), &partial_shape, &type));
+    //     // If the shape of the placeholder is only partially known, we are free
+    //     // to set unknown dimensions of its shape to any value we desire. We
+    //     // choose 0 to minimize the memory impact. Note that this only matters
+    //     // if an optimizer chooses to run the graph.
+    //     TensorShape shape;
+    //     if (partial_shape.unknown_rank()) {
+    //       shape = TensorShape({0});
+    //     } else {
+    //       for (int i = 0; i < partial_shape.dims(); ++i) {
+    //         if (partial_shape.dim_size(i) < 0) {
+    //           partial_shape.set_dim(i, 0);
+    //         }
+    //       }
+    //       if (!partial_shape.AsTensorShape(&shape)) {
+    //         printf("[Debug] ########\n");
+    //         return errors::InvalidArgument(
+    //             "Could not derive shape for feed node: ",
+    //             node->def().DebugString());
+    //       }
+    //     }
 
-        Tensor fake_input(type, shape);
-        item.feed.emplace_back(node->name(), fake_input);
-      }
-    }
+    //     Tensor fake_input(type, shape);
+    //     item.feed.emplace_back(node->name(), fake_input);
+    //   }
+    // }
 
     Device* cpu_device = nullptr;
     for (const auto& device : device_set_->devices()) {
