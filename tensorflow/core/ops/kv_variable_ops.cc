@@ -371,6 +371,7 @@ REGISTER_OP("GroupEmbeddingVarLookup")
     .Attr("Tkeys: {int64, int32}")
     .Attr("max_norm: float = -1.0")
     .Attr("num_lookups: int >= 1")
+    .Attr("is_inference: bool = false")
     .SetShapeFn([](InferenceContext* c) {
       int num_lookups;
       TF_RETURN_IF_ERROR(c->GetAttr("num_lookups", &num_lookups));
