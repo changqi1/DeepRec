@@ -5362,7 +5362,8 @@ tf_kernel_library(
 
 tf_kernel_library(
     name = "group_embedding_ops",
-    srcs = ["group_lookup_forward_ops.cc"],
+    srcs = ["group_lookup_forward_ops.cc",
+            "group_lookup_backward_ops.cc",],
     gpu_srcs = ["group_lookup_forward_base_ops.cu.h",
                 "group_lookup_backward_base_ops.cu.h",
                 "group_lookup_forward_ops.cu.cc",
@@ -5374,6 +5375,7 @@ tf_kernel_library(
             "//tensorflow/core:embedding_gpu",
             "@sparsehash_c11//:dense_hash_map",
             "@libcuckoo//:libcuckoo",
+            ":unique_ali_op",
             "@com_github_google_leveldb//:leveldb",] + DYNAMIC_DEPS + mkl_deps() +
            if_cuda(["@cub_archive//:cub",
                     ":fused_embedding_common_cuh",
