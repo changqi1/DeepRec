@@ -124,8 +124,6 @@ class GroupEmbeddingVariableLookupCpuOp : public OpKernel {
     }
   }
 
-  // bool IsExpensive() override { return true; }
-
   void Compute(OpKernelContext* ctx) override {
     /*
       step 1: unique and assign unique output and index
@@ -570,6 +568,195 @@ class GroupVariableLookupCpuOp : public OpKernel {
                               .TypeConstraint<key_type>("Tkeys")    \
                               .TypeConstraint<value_type>("dtype"), \
                           GroupVariableLookupCpuOp<key_type, value_type>)
+
+REGISTER_CPU_KERNELS(int32, float);
+REGISTER_CPU_KERNELS(int64, float);
+#undef REGISTER_CPU_KERNELS
+
+
+template <typename TKey, typename TValue>
+class GroupEmbeddingVariableLookupDenseCpuOp : public OpKernel {
+ public:
+  explicit GroupEmbeddingVariableLookupDenseCpuOp(OpKernelConstruction* c)
+      : OpKernel(c) {
+    OP_REQUIRES_OK(c, c->GetAttr("num_lookups", &num_lookups_));
+    OP_REQUIRES_OK(c, c->GetAttr("dimension", &dimension_));
+    // OP_REQUIRES_OK(c, c->GetAttr("max_norm", &max_norm_));
+    OP_REQUIRES_OK(c, c->GetAttr("is_use_default_value_tensor",
+                                 &is_use_default_value_tensor_));
+    TF_CHECK_OK(ReadBoolFromEnvVar(kInferenceMode, false, &is_inference_));
+    
+    thread_pool_ = std::make_unique<thread::ThreadPool>(
+        Env::Default(), "GroupEmbeddingDense", num_lookups_ / 2);
+    if (is_use_default_value_tensor_) {
+      get_default_v_fn_ = [](TValue* default_v, TKey id, int64 index,
+                             int64 total_dim,
+                             int64 len) { return default_v + len * index; };
+    } else {
+      get_default_v_fn_ = [](TValue* default_v, TKey id, int64 index,
+                             int64 total_dim, int64 len) {
+        return default_v + len * (id % total_dim);
+      };
+    }
+    // TODO: FIXME
+    if (c->num_inputs() == 4) {
+      get_count_fn_ = [](const int32* count, int64 index) {
+        return count[index];
+      };
+    } else {
+      get_count_fn_ = [](const int32* count, int64 index) { return 1; };
+    }
+    if (!is_inference_) {
+      lookup_fn_ = [](EmbeddingVar<TKey, TValue>* ev, TKey key, TValue* val,
+                      TValue* default_v, int count) {
+        ev->LookupOrCreate(key, val, default_v, count);
+        return Status::OK();
+      };
+    } else {
+      lookup_fn_ = [](EmbeddingVar<TKey, TValue>* ev, TKey key, TValue* val,
+                      TValue* default_v, int count) {
+        ev->LookupOrCreate(key, val, default_v);
+        return Status::OK();
+      };
+    }
+  }
+
+  void Compute(OpKernelContext* ctx) override {
+    /*
+      step 1: unique and assign unique output and index
+      step 2: doing parallel unique value gather
+    */
+    auto worker_threads = ctx->device()->tensorflow_cpu_worker_threads();
+    ScopedPerThreadMaxParallelism(num_lookups_ * 2);
+    // uint64_t op_start_micros = Env::Default()->NowMicros();
+    auto do_compute = [this, ctx, worker_threads](int i) {
+      EmbeddingVar<TKey, TValue>* embedding_var = nullptr;
+      OP_REQUIRES_OK(
+          ctx, LookupResource(ctx, HandleFromInput(ctx, i), &embedding_var));
+      core::ScopedUnref unref_me(embedding_var);
+
+      const Tensor& dense_values_tensor = ctx->input(num_lookups_ + i);
+      auto dense_values = dense_values_tensor.flat<TKey>().data();
+      int nnz = dense_values_tensor.NumElements();
+
+      OP_REQUIRES(
+          ctx,
+          !embedding_var->IsMultiLevel() || (embedding_var->IsMultiLevel() &&
+                                             embedding_var->CacheSize() >= nnz),
+          errors::InvalidArgument("MultiLevel EV's Cache size ",
+                                  embedding_var->CacheSize(),
+                                  " should large than IDs in batch ", nnz));
+
+      TensorShape unique_idx_tensor_shape =
+          TensorShape(std::vector<int64>({static_cast<long long>(nnz)}));
+      Tensor* unique_idx_tensor = nullptr;
+      // allocate output
+      OP_REQUIRES_OK(ctx, ctx->allocate_output(2 * num_lookups_ + i,
+                                               unique_idx_tensor_shape,
+                                               &unique_idx_tensor));
+      auto unique_idx = unique_idx_tensor->flat<int>().data();
+
+      // Stage 1
+      google::dense_hash_map<TKey, int32> unique_map;
+      unique_map.set_empty_key(std::numeric_limits<TKey>::max());
+      unique_map.resize(2 * nnz);
+
+      for (int64 k = 0, j = 0; k < nnz; ++k) {
+        /***********Doing Unique **************/
+        auto it = unique_map.emplace(dense_values[k], j);
+        unique_idx[k] = it.first->second;
+
+        if (it.second) {
+          ++j;
+        }
+      }
+
+      int unique_nnz = unique_map.size();
+      Tensor* unique_tensor = nullptr;
+      TensorShape unique_shape{static_cast<int64>(unique_nnz)};
+      OP_REQUIRES_OK(ctx, ctx->allocate_output(num_lookups_ + i, unique_shape,
+                                               &unique_tensor));
+      auto* unique = unique_tensor->flat<TKey>().data();
+
+      for (auto it : unique_map) {
+        unique[it.second] = it.first;
+      }
+
+      TValue* default_v = nullptr;
+      if (is_use_default_value_tensor_) {
+        default_v =
+            reinterpret_cast<TValue*>(ctx->input(num_lookups_ * 2 + 1).data());
+      } else {
+        default_v = embedding_var->GetDefaultValuePtr();
+      }
+
+      auto dense_values_tensor_shape = dense_values_tensor.shape();
+      TensorShape emb_vectors_tensor_shape = TensorShape(dense_values_tensor_shape);
+      emb_vectors_tensor_shape.AddDim(dimension_);
+      Tensor* gather_embedding_tensor = nullptr;
+      // allocate output
+      OP_REQUIRES_OK(ctx, ctx->allocate_output(i, emb_vectors_tensor_shape,
+                                               &gather_embedding_tensor));
+      auto gather_embedding = gather_embedding_tensor->flat<TValue>().data();
+
+      int slice_bytes = nnz * dimension_ * 1000;
+      auto do_lookup = [this, ctx, embedding_var, unique, default_v, unique_idx,
+                        gather_embedding](int64 start, int64 end) {
+        for (int k = start; k < end; ++k) {
+          int32* counts = nullptr;
+          TKey unique_id = unique[unique_idx[k]];
+          TValue* default_v_ptr = get_default_v_fn_(
+              default_v, unique_id, k, embedding_var->GetDefaultValueDim(),
+              embedding_var->ValueLen());
+          int32 count = get_count_fn_(counts, k);
+          OP_REQUIRES_OK(ctx, lookup_fn_(embedding_var, unique_id,
+                                         gather_embedding + k * dimension_,
+                                         default_v_ptr, count));
+        }
+      };
+      Shard(worker_threads->num_threads, worker_threads->workers, nnz,
+            slice_bytes /*cost*/, do_lookup);  // Parallel on batch
+
+      if (embedding_var->IsMultiLevel()) {
+        embedding::BatchCache<TKey>* cache = embedding_var->Cache();
+        embedding_var->storage_manager()->Schedule(
+            [embedding_var, dense_values_tensor] {
+              embedding::BatchCache<TKey>* cache = embedding_var->Cache();
+              cache->add_to_rank(dense_values_tensor);
+            });
+      }
+      // LOG(INFO) << "idx " << i << " embedding time stats: "
+      //           << " unique_secs: " <<
+      //           strings::HumanReadableElapsedTime(unique_secs)
+      //           << " lookup_secs: " <<
+      //           strings::HumanReadableElapsedTime(lookup_secs)
+      //           << " pooling_secs: " <<
+      //           strings::HumanReadableElapsedTime(pooling_secs);
+    };
+    ParallelFor(do_compute, num_lookups_, thread_pool_.get());
+  }
+
+ private:
+  std::unique_ptr<thread::ThreadPool> thread_pool_;
+  std::function<int32(int32*, int64)> get_count_fn_;
+  std::function<TValue*(TValue*, TKey, int64, int64, int64)> get_default_v_fn_;
+  std::function<Status(EmbeddingVar<TKey, TValue>* ev, TKey key, TValue* val,
+                       /*TValue* sp_weight,*/ TValue* default_v, int count)>
+      lookup_fn_;
+  // float max_norm_;
+  int num_lookups_;
+  int dimension_;
+  bool is_use_default_value_tensor_;
+  bool is_inference_;
+};
+
+#define REGISTER_CPU_KERNELS(key_type, value_type) \
+  REGISTER_KERNEL_BUILDER(                         \
+      Name("GroupEmbeddingVarLookupDense")         \
+          .Device(DEVICE_CPU)                      \
+          .TypeConstraint<key_type>("Tkeys")       \
+          .TypeConstraint<value_type>("dtype"),    \
+      GroupEmbeddingVariableLookupDenseCpuOp<key_type, value_type>)
 
 REGISTER_CPU_KERNELS(int32, float);
 REGISTER_CPU_KERNELS(int64, float);
