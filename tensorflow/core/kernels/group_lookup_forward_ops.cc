@@ -35,22 +35,6 @@ const char* kInferenceMode = "INFERENCE_MODE";
 
 enum Combiner { Mean, Sum, Sqrtn };
 
-template <Combiner combiner>
-inline float DoCombiner(float in, int feature_num);
-
-template <>
-inline float DoCombiner<Mean>(float in, int feature_num) {
-  return in / feature_num;
-}
-template <>
-inline float DoCombiner<Sum>(float in, int feature_num) {
-  return in;
-}
-template <>
-inline float DoCombiner<Sqrtn>(float in, int feature_num) {
-  return in / sqrtf(feature_num);
-}
-
 void ParallelFor(const std::function<void(size_t)>& f, size_t n,
                  thread::ThreadPool* thread_pool) {
   if (n == 0) return;
@@ -165,7 +149,15 @@ class GroupEmbeddingVariableLookupCpuOp : public OpKernel {
                                                &unique_idx_tensor));
       auto unique_idx = unique_idx_tensor->flat<int>().data();
 
-      std::vector<int> batch_nums(batch_size, 0);
+      TensorShape batch_nums_tensor_shape =
+          TensorShape(std::vector<int64>({static_cast<long long>(batch_size)}));
+      Tensor* batch_nums_tensor = nullptr;
+      // allocate output
+      OP_REQUIRES_OK(ctx, ctx->allocate_output(3 * num_lookups_ + i,
+                                               batch_nums_tensor_shape,
+                                               &batch_nums_tensor));
+      auto batch_nums = batch_nums_tensor->flat<int>().data();
+
       // Stage 1
       google::dense_hash_map<TKey, int32> unique_map;
       unique_map.set_empty_key(std::numeric_limits<TKey>::max());
@@ -359,7 +351,7 @@ class GroupEmbeddingVariableLookupCpuOp : public OpKernel {
   std::function<int32(int32*, int64)> get_count_fn_;
   std::function<TValue*(TValue*, TKey, int64, int64, int64)> get_default_v_fn_;
   std::function<Status(EmbeddingVar<TKey, TValue>* ev, TKey key, TValue* val,
-                       /*TValue* sp_weight,*/ TValue* default_v, int count)>
+                       TValue* default_v, int count)>
       lookup_fn_;
   std::string combiner_;
   // float max_norm_;
@@ -391,7 +383,7 @@ class GroupVariableLookupCpuOp : public OpKernel {
     OP_REQUIRES_OK(c, c->GetAttr("dimension", &dimension_));
     // OP_REQUIRES_OK(c, c->GetAttr("max_norm", &max_norm_));
     thread_pool_ = std::make_unique<thread::ThreadPool>(
-        Env::Default(), "GroupEmbedding", num_lookups_ / 4);
+        Env::Default(), "GroupEmbedding", num_lookups_ / 2);
   }
 
   void Compute(OpKernelContext* ctx) override {
@@ -428,7 +420,14 @@ class GroupVariableLookupCpuOp : public OpKernel {
                                                  &unique_idx_tensor));
         auto unique_idx = unique_idx_tensor->flat<int>().data();
 
-        std::vector<int> batch_nums(batch_size, 0);
+        TensorShape batch_nums_tensor_shape =
+            TensorShape(std::vector<int64>({static_cast<long long>(batch_size)}));
+        Tensor* batch_nums_tensor = nullptr;
+        // allocate output
+        OP_REQUIRES_OK(ctx, ctx->allocate_output(3 * num_lookups_ + i,
+                                                batch_nums_tensor_shape,
+                                                &batch_nums_tensor));
+        auto batch_nums = batch_nums_tensor->flat<int>().data();
         // do unique
         google::dense_hash_map<TKey, int32> unique_map;
         unique_map.set_empty_key(std::numeric_limits<TKey>::max());
@@ -550,7 +549,7 @@ class GroupVariableLookupCpuOp : public OpKernel {
         }
     };
 
-    ParallelFor(do_compute, num_lookups_, worker_threads->workers);
+    ParallelFor(do_compute, num_lookups_, thread_pool_.get());
   }
 
  private:
