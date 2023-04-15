@@ -53,10 +53,12 @@ def _GroupGatherGrad(op, *grads):
   params = op.inputs[:ev_num]
   sp_indices = op.inputs[ev_num*2:ev_num*3]
   unique_values = op.outputs[ev_num:2*ev_num]
+  batch_nums = op.outputs[3*ev_num:4*ev_num]
   nnz_grads = gen_kv_variable_ops.group_embedding_variable_lookup_grad(grads[:ev_num],
                                                                       params,
                                                                       unique_values,
                                                                       sp_indices,
+                                                                      batch_nums,
                                                                       dimension,
                                                                       combiner)                                                            
   for i in range(ev_num):
@@ -115,10 +117,12 @@ def _GroupEmbeddingLookup(op, *grads):
   params = op.inputs[:ev_num]
   unique_values = op.outputs[ev_num:2*ev_num]
   unique_idx = op.outputs[2*ev_num:3*ev_num]
+  batch_nums = op.outputs[3*ev_num:4*ev_num]
   nnz_grads = gen_kv_variable_ops.group_variable_lookup_grad(grads[:ev_num],
                                                             params,
                                                             unique_values,
                                                             unique_idx,
+                                                            batch_nums,
                                                             dimension,
                                                             combiner)
   for i in range(ev_num):

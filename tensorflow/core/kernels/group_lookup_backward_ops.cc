@@ -41,24 +41,6 @@ void ParallelFor(const std::function<void(size_t)>& f, size_t n,
   }
 }
 
-template <typename TValue>
-static void sparse_variable_grad_reduce(const TValue* grads, const int* offsets,
-                                        const int batch_size,
-                                        const int dimension, const int nnz,
-                                        TValue* outputs) {
-  for (int i = 0; i < batch_size; ++i) {
-    int batch_offset = 0;
-    if (i != 0) {
-      batch_offset = offsets[i-1];
-    }
-    int feature_num = offsets[i] - batch_offset;
-    for (int j = 0; j < feature_num; ++j) {
-      memcpy(outputs + (batch_offset + j) * dimension, grads + i * dimension,
-             sizeof(TValue) * dimension);
-    }
-  }
-}
-
 }  // namespace
 
 template <typename TKey, typename TValue>
@@ -70,7 +52,8 @@ class GroupEmbeddingVarLookupGradCpuOp : public OpKernel {
     OP_REQUIRES_OK(c, c->GetAttr("num_lookups", &num_lookups_));
     OP_REQUIRES_OK(c, c->GetAttr("dimension", &dimension_));
     OP_REQUIRES_OK(c, c->GetAttr("max_norm", &max_norm_));
-    thread_pool_ = new thread::ThreadPool(Env::Default(), "GroupEmbeddingBackward", num_lookups_ / 2);
+    thread_pool_ = new thread::ThreadPool(
+        Env::Default(), "GroupEmbeddingBackward", num_lookups_ / 2);
   }
 
   void Compute(OpKernelContext* ctx) override {
@@ -81,11 +64,12 @@ class GroupEmbeddingVarLookupGradCpuOp : public OpKernel {
       const Tensor unique_keys_tensor = ctx->input(2 * num_lookups_ + i);
       auto* unique_keys = unique_keys_tensor.flat<TKey>().data();
       int unique_nnz = unique_keys_tensor.NumElements();
-      
+
       const Tensor sp_indices_tensor = ctx->input(3 * num_lookups_ + i);
       auto* sp_indices = sp_indices_tensor.flat<int64>().data();
       const Tensor batch_nums_tensor = ctx->input(4 * num_lookups_ + i);
       auto* batch_nums = batch_nums_tensor.flat<int>().data();
+      
       Tensor* grads_sp_values_tensor;
       TensorShape grads_sp_values_tensor_shape =
           TensorShape(std::vector<int64>({unique_nnz, dimension_}));
@@ -95,41 +79,50 @@ class GroupEmbeddingVarLookupGradCpuOp : public OpKernel {
 
       int slice_bytes = unique_nnz * dimension_ * 1000;
       if (combiner_ == "mean") {
-        auto embedding_var_grad_combiner = [this, &grads_sp_values, sp_indices, grads, batch_nums](int64 start, int64 end) {
+        auto embedding_var_grad_combiner = [this, &grads_sp_values, sp_indices,
+                                            grads, batch_nums](int64 start,
+                                                               int64 end) {
           for (int64 i = start; i < end; ++i) {
-             int segment_id = sp_indices[i];
-             int scale = batch_nums[segment_id];
-             for (int d = 0; d < dimension_; ++d) {
-              grads_sp_values[i * dimension_ + d] = grads[segment_id * dimension_ + d] / scale;
-             }
+            int segment_id = sp_indices[i];
+            int scale = batch_nums[segment_id];
+            for (int d = 0; d < dimension_; ++d) {
+              grads_sp_values[i * dimension_ + d] =
+                  grads[segment_id * dimension_ + d] / scale;
+            }
           }
         };
-        Shard(worker_threads->num_threads, worker_threads->workers,
-              unique_nnz, slice_bytes /*cost*/,
+        Shard(worker_threads->num_threads, worker_threads->workers, unique_nnz,
+              slice_bytes /*cost*/,
               embedding_var_grad_combiner);  // Parallel on batch
       } else if (combiner_ == "sum") {
-        auto embedding_var_grad_combiner = [this, &grads_sp_values, sp_indices, grads, batch_nums](int64 start, int64 end) {
+        auto embedding_var_grad_combiner = [this, &grads_sp_values, sp_indices,
+                                            grads, batch_nums](int64 start,
+                                                               int64 end) {
           for (int64 i = start; i < end; ++i) {
-             int segment_id = sp_indices[i];
-             memcpy(grads_sp_values + i * dimension_, grads + segment_id * dimension_,
-                    sizeof(TValue) * dimension_);
+            int segment_id = sp_indices[i];
+            memcpy(grads_sp_values + i * dimension_,
+                   grads + segment_id * dimension_,
+                   sizeof(TValue) * dimension_);
           }
         };
-        Shard(worker_threads->num_threads, worker_threads->workers,
-              unique_nnz, slice_bytes /*cost*/,
+        Shard(worker_threads->num_threads, worker_threads->workers, unique_nnz,
+              slice_bytes /*cost*/,
               embedding_var_grad_combiner);  // Parallel on batch
       } else {
-        auto embedding_var_grad_combiner = [this, &grads_sp_values, sp_indices, grads, batch_nums](int64 start, int64 end) {
+        auto embedding_var_grad_combiner = [this, &grads_sp_values, sp_indices,
+                                            grads, batch_nums](int64 start,
+                                                               int64 end) {
           for (int64 i = start; i < end; ++i) {
-             int segment_id = sp_indices[i];
-             int scale = batch_nums[segment_id];
-             for (int d = 0; d < dimension_; ++d) {
-              grads_sp_values[i * dimension_ + d] = grads[segment_id * dimension_ + d] / sqrtf(scale);
-             }
+            int segment_id = sp_indices[i];
+            int scale = batch_nums[segment_id];
+            for (int d = 0; d < dimension_; ++d) {
+              grads_sp_values[i * dimension_ + d] =
+                  grads[segment_id * dimension_ + d] / sqrtf(scale);
+            }
           }
         };
-        Shard(worker_threads->num_threads, worker_threads->workers,
-              unique_nnz, slice_bytes /*cost*/,
+        Shard(worker_threads->num_threads, worker_threads->workers, unique_nnz,
+              slice_bytes /*cost*/,
               embedding_var_grad_combiner);  // Parallel on batch
       }
     };
@@ -165,7 +158,8 @@ class GroupVariableLookupGradCpuOp : public OpKernel {
     OP_REQUIRES_OK(c, c->GetAttr("num_lookups", &num_lookups_));
     OP_REQUIRES_OK(c, c->GetAttr("dimension", &dimension_));
     OP_REQUIRES_OK(c, c->GetAttr("max_norm", &max_norm_));
-    thread_pool_ = new thread::ThreadPool(Env::Default(), "GroupEmbeddingBackward", num_lookups_ / 2);
+    thread_pool_ = new thread::ThreadPool(
+        Env::Default(), "GroupEmbeddingBackward", num_lookups_ / 2);
   }
 
   void Compute(OpKernelContext* ctx) override {
@@ -182,7 +176,7 @@ class GroupVariableLookupGradCpuOp : public OpKernel {
       auto* sp_indices = sp_indices_tensor.flat<int64>().data();
       const Tensor batch_nums_tensor = ctx->input(4 * num_lookups_ + i);
       auto* batch_nums = batch_nums_tensor.flat<int>().data();
-      
+
       Tensor* grads_sp_values_tensor;
       TensorShape grads_sp_values_tensor_shape =
           TensorShape(std::vector<int64>({unique_nnz, dimension_}));
@@ -192,41 +186,50 @@ class GroupVariableLookupGradCpuOp : public OpKernel {
 
       int slice_bytes = unique_nnz * dimension_ * 1000;
       if (combiner_ == "mean") {
-        auto embedding_var_grad_combiner = [this, &grads_sp_values, sp_indices, grads, batch_nums](int64 start, int64 end) {
+        auto embedding_var_grad_combiner = [this, &grads_sp_values, sp_indices,
+                                            grads, batch_nums](int64 start,
+                                                               int64 end) {
           for (int64 i = start; i < end; ++i) {
-             int segment_id = sp_indices[i];
-             int scale = batch_nums[segment_id];
-             for (int d = 0; d < dimension_; ++d) {
-              grads_sp_values[i * dimension_ + d] = grads[segment_id * dimension_ + d] / scale;
-             }
+            int segment_id = sp_indices[i];
+            int scale = batch_nums[segment_id];
+            for (int d = 0; d < dimension_; ++d) {
+              grads_sp_values[i * dimension_ + d] =
+                  grads[segment_id * dimension_ + d] / scale;
+            }
           }
         };
-        Shard(worker_threads->num_threads, worker_threads->workers,
-              unique_nnz, slice_bytes /*cost*/,
+        Shard(worker_threads->num_threads, worker_threads->workers, unique_nnz,
+              slice_bytes /*cost*/,
               embedding_var_grad_combiner);  // Parallel on batch
       } else if (combiner_ == "sum") {
-        auto embedding_var_grad_combiner = [this, &grads_sp_values, sp_indices, grads, batch_nums](int64 start, int64 end) {
+        auto embedding_var_grad_combiner = [this, &grads_sp_values, sp_indices,
+                                            grads, batch_nums](int64 start,
+                                                               int64 end) {
           for (int64 i = start; i < end; ++i) {
-             int segment_id = sp_indices[i];
-             memcpy(grads_sp_values + i * dimension_, grads + segment_id * dimension_,
-                    sizeof(TValue) * dimension_);
+            int segment_id = sp_indices[i];
+            memcpy(grads_sp_values + i * dimension_,
+                   grads + segment_id * dimension_,
+                   sizeof(TValue) * dimension_);
           }
         };
-        Shard(worker_threads->num_threads, worker_threads->workers,
-              unique_nnz, slice_bytes /*cost*/,
+        Shard(worker_threads->num_threads, worker_threads->workers, unique_nnz,
+              slice_bytes /*cost*/,
               embedding_var_grad_combiner);  // Parallel on batch
       } else {
-        auto embedding_var_grad_combiner = [this, &grads_sp_values, sp_indices, grads, batch_nums](int64 start, int64 end) {
+        auto embedding_var_grad_combiner = [this, &grads_sp_values, sp_indices,
+                                            grads, batch_nums](int64 start,
+                                                               int64 end) {
           for (int64 i = start; i < end; ++i) {
-             int segment_id = sp_indices[i];
-             int scale = batch_nums[segment_id];
-             for (int d = 0; d < dimension_; ++d) {
-              grads_sp_values[i * dimension_ + d] = grads[segment_id * dimension_ + d] / sqrtf(scale);
-             }
+            int segment_id = sp_indices[i];
+            int scale = batch_nums[segment_id];
+            for (int d = 0; d < dimension_; ++d) {
+              grads_sp_values[i * dimension_ + d] =
+                  grads[segment_id * dimension_ + d] / sqrtf(scale);
+            }
           }
         };
-        Shard(worker_threads->num_threads, worker_threads->workers,
-              unique_nnz, slice_bytes /*cost*/,
+        Shard(worker_threads->num_threads, worker_threads->workers, unique_nnz,
+              slice_bytes /*cost*/,
               embedding_var_grad_combiner);  // Parallel on batch
       }
     };

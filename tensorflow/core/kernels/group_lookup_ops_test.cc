@@ -1,6 +1,7 @@
 #include <sys/resource.h>
 
 #include "tensorflow/core/common_runtime/kernel_benchmark_testlib.h"
+#include "tensorflow/core/framework/embedding/config.pb.h"
 #include "tensorflow/core/framework/embedding/embedding_var.h"
 #include "tensorflow/core/framework/fake_input.h"
 #include "tensorflow/core/framework/node_def_builder.h"
@@ -11,6 +12,7 @@
 #include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/platform/test_benchmark.h"
 #include "tensorflow/core/public/session.h"
+#include "tensorflow/core/framework/resource_mgr.h"
 
 #if GOOGLE_CUDA
 #define EIGEN_USE_GPU
@@ -550,6 +552,63 @@ class GroupEmbeddingVariableForWardOpTest : public OpsTestBase {
 
     DataType k_dtype = DataTypeToEnum<TKey>::value;
     DataType v_dtype = DataTypeToEnum<TValue>::value;
+    TensorShapeProto tshape_proto;
+    tshape_proto.add_dim()->set_size(8);
+    TF_EXPECT_OK(NodeDefBuilder("kv_var_handle",
+                                "KvVarHandleOp")
+                     .Attr("dtype", v_dtype)
+                     .Attr("Tkeys", k_dtype)
+                     .Attr("shape", tshape_proto)
+                     .Attr("container", "EV")
+                     .Attr("shared_name", "EV")
+                     .Finalize(node_def()));
+    TF_EXPECT_OK(InitOp());
+    TF_ASSERT_OK(RunOpKernel());
+    const Tensor& ev_resource = *GetOutput(0);
+    auto ev_handle = ev_resource.flat<ResourceHandle>()(0);
+    TF_EXPECT_OK(NodeDefBuilder("initialize_kv_variable",
+                                "InitializeKvVariableOp")
+                     .Input(FakeInput(DT_RESOURCE))  // ev
+                     .Input(FakeInput(DT_RESOURCE))  // ev
+                     .Input(FakeInput(v_dtype))      // sp_values
+                     .Input(FakeInput(k_dtype))     // sp_indices
+                     .Attr("dtype", v_dtype)
+                     .Attr("Tkeys", k_dtype)
+                    .Attr("slot_num", 0)
+                    .Attr("shape", tshape_proto)
+                    .Attr("initial_num_buckets", 131072)  // 2^17
+                    .Attr("max_load_factor", 0.8)	
+                    .Attr("steps_to_live", 0)
+                    .Attr("emb_index", 0)
+                    .Attr("block_num", 1)
+                    .Attr("slot_index", 0)
+                    .Attr("ht_partition_num", 1000)
+                    .Attr("filter_freq", 0)
+                    .Attr("max_freq", 999999)
+                    .Attr("max_element_size", 0)
+                    .Attr("counter_type", k_dtype)
+                    .Attr("false_positive_probability", -1.0)
+                    .Attr("l2_weight_threshold", -1.0)
+                    .Attr("layout", "")
+                    .Attr("storage_type", 0)
+                    .Attr("default_value_dim", 8)
+                    .Attr("default_value_no_permission", 0.0)
+                    .Attr("record_freq", false)
+                    .Attr("record_version", false)
+                    .Finalize(node_def()));
+    TF_EXPECT_OK(InitOp());
+
+    AddInputFromArray<ResourceHandle>(TensorShape({}), {ev_handle});
+    AddInputFromArray<ResourceHandle>(TensorShape({}), {ev_handle});
+    Tensor default_values(v_dtype, {8});
+    test::FillValues<TValue>(&default_values, {1.0f, 1.0f, 1.0f, 1.0f,
+                                              1.0f, 1.0f, 1.0f, 1.0f});
+    AddInputFromArray<TValue>(default_values.shape(), default_values.flat<TValue>());
+    Tensor empty_key(k_dtype, {1});
+    test::FillValues<TKey>(&empty_key, {-1});
+    AddInputFromArray<TKey>(empty_key.shape(), empty_key.flat<TKey>());
+    TF_ASSERT_OK(RunOpKernel());
+
     std::string combiner_str;
     float max_norm;
 
@@ -598,10 +657,45 @@ class GroupEmbeddingVariableForWardOpTest : public OpsTestBase {
            100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0,
            110.0, 111.0, 112.0, 113.0, 114.0, 115.0, 116.0, 117.0, 118.0, 119.0,
            120.0, 121.0, 122.0, 123.0, 124.0, 125.0, 126.0, 127.0});
-      ResourceHandle handle =
-          MakeResourceHandle<EmbeddingVar<TKey, TValue>>(
-              context_.get(), "EV", "EmbeddingVar-" + std::to_string(i));
-      AddInputFromArray<ResourceHandle>(TensorShape({}), {handle});
+      LOG(INFO) << "======== " << i;
+      
+      // LookupOrCreateResource<EmbeddingVar<TKey, TValue>>(
+      //       context_.get(), handle, &ev,
+      //       [this, default_tensor, handle](EmbeddingVar<TKey, TValue>** ptr) {
+      //         // Allocator* gpu_allocator =
+      //         //     device_->GetAllocator(AllocatorAttributes());
+      //             //context->get_allocator(AllocatorAttributes());
+      //         // auto embedding_config = EmbeddingConfig(
+      //         //     emb_index_ + block_num_ * slot_index_,
+      //         //     emb_index_, block_num_, slot_num_,
+      //         //     opname + "-primary", steps_to_live_,
+      //         //     filter_freq_, max_freq_,
+      //         //     l2_weight_threshold_, layout_,
+      //         //     max_element_size_, false_positive_probability_,
+      //         //     counter_type_, default_value_dim_,
+      //         //     default_value_no_permission_,
+      //         //     record_freq_, record_version_);
+      //         auto embedding_config = 
+      //             EmbeddingConfig(0, 0, 1, 1, "", 0, 0, 99999, 14.0);
+      //         // auto storage_manager =
+      //         //     new embedding::StorageManager<TKey, TValue>(
+      //         //       handle.name(),
+      //         //       embedding::StorageConfig(
+      //         //         storage_type_, storage_path_, storage_size_, layout_,
+      //         //         embedding_config),
+      //         //       gpu_allocator);
+      //         auto storage_manager = new embedding::StorageManager<TKey, TValue>(
+      //                       handle.name(),
+      //                       embedding::StorageConfig(
+      //                           embedding::StorageType::DRAM,
+      //                           "", {1024, 1024, 1024, 1024},
+      //                           "light",
+      //                           embedding_config));
+              
+      //       return Status::OK();
+      //       });
+
+      AddInputFromArray<ResourceHandle>(TensorShape({}), {ev_handle});
     }
 
     for (int i = 0; i < num_lookups; ++i) {
@@ -696,10 +790,10 @@ TEST_F(GroupEmbeddingVariableForWardOpTest,
 // }
 
 template <TestCase test_case>
-void fill_ev_vector_expected(Tensor* expected);
+void fill_ev_dense_vector_expected(Tensor* expected);
 
 template <>
-void fill_ev_vector_expected<Sqrtn>(Tensor* expected) {
+void fill_ev_dense_vector_expected<Sqrtn>(Tensor* expected) {
   test::FillValues<float>(
       expected, {22.627416610717773, 24.0416316986084,   25.45584487915039,
                  26.870058059692383, 28.284271240234375, 29.698484420776367,
@@ -715,7 +809,7 @@ void fill_ev_vector_expected<Sqrtn>(Tensor* expected) {
 }
 
 template <>
-void fill_ev_vector_expected<Mean>(Tensor* expected) {
+void fill_ev_dense_vector_expected<Mean>(Tensor* expected) {
   test::FillValues<float>(
       expected, {16.00000000000000, 17.00000000000000, 18.00000000000000,
                  19.00000000000000, 20.00000000000000, 21.00000000000000,
@@ -731,7 +825,7 @@ void fill_ev_vector_expected<Mean>(Tensor* expected) {
 }
 
 template <>
-void fill_ev_vector_expected<Sum>(Tensor* expected) {
+void fill_ev_dense_vector_expected<Sum>(Tensor* expected) {
   test::FillValues<float>(
       expected, {32.0,  34.0,  36.0,  38.0,  40.0,  42.0,  44.0,  46.0,
                  128.0, 131.0, 134.0, 137.0, 140.0, 143.0, 146.0, 149.0,
@@ -740,7 +834,7 @@ void fill_ev_vector_expected<Sum>(Tensor* expected) {
 }
 
 template <>
-void fill_ev_vector_expected<SqrtnAndMaxNorm200>(Tensor* expected) {
+void fill_ev_dense_vector_expected<SqrtnAndMaxNorm200>(Tensor* expected) {
   test::FillValues<float>(
       expected,
       {22.62741661, 24.04163170, 25.45584488,  26.87005806,  28.28427124,
@@ -815,7 +909,7 @@ class GroupEmbeddingVariableDenseForwardOpTest : public OpsTestBase {
 
     Tensor emb_vector_expected(v_dtype, {batch_size, emb_vector_dim});
     Tensor sp_values_offset_expected(DT_INT64, {7});
-    fill_ev_vector_expected<test_case>(&emb_vector_expected);
+    fill_ev_dense_vector_expected<test_case>(&emb_vector_expected);
     test::FillValues<int64>(&sp_values_offset_expected,
                             {3, 1, 4, 5, 7, 12, 15});
 
