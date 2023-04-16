@@ -229,7 +229,9 @@ class GroupEmbeddingVariableLookupCpuOp : public OpKernel {
             });
       }
 
-      TValue* sp_weights = default_v;
+      std::vector<TValue> default_weights(nnz, 1.0);
+      TValue* sp_weights = default_weights.data();
+      // TValue* sp_weights = default_v;
       if (!ignore_weights_) {
         const Tensor& sp_weights_tensor =
             ctx->input(this->num_lookups_ * 3 + i);
@@ -287,7 +289,7 @@ class GroupEmbeddingVariableLookupCpuOp : public OpKernel {
                   float* u_embedding =
                       unique_embedding_data + unique_indice * dimension_;
                   for (int d = 0; d < dimension_; ++d) {
-                    tmp_embedding[d] = std::fma(*(u_embedding + d),
+                    tmp_embedding[d] = std::fma(u_embedding[d],
                                                 sp_weights[batch_offset + j],
                                                 tmp_embedding[d]);
                   }
@@ -312,7 +314,7 @@ class GroupEmbeddingVariableLookupCpuOp : public OpKernel {
                   float* u_embedding =
                       unique_embedding_data + unique_indice * dimension_;
                   for (int d = 0; d < dimension_; ++d) {
-                    tmp_embedding[d] = std::fma(*(u_embedding + d),
+                    tmp_embedding[d] = std::fma(u_embedding[d],
                                                 sp_weights[batch_offset + j],
                                                 tmp_embedding[d]);
                   }
@@ -454,7 +456,8 @@ class GroupVariableLookupCpuOp : public OpKernel {
         unique[it.second] = it.first;
       }
 
-      TValue* sp_weights = nullptr;
+      std::vector<TValue> default_weights(nnz, 1.0);
+      TValue* sp_weights = default_weights.data();
       if (!ignore_weights_) {
         const Tensor& sp_weights_tensor =
             ctx->input(this->num_lookups_ * 3 + i);

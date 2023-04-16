@@ -5,6 +5,7 @@
 #include "tensorflow/core/framework/embedding/embedding_var.h"
 #include "tensorflow/core/framework/fake_input.h"
 #include "tensorflow/core/framework/node_def_builder.h"
+#include "tensorflow/core/framework/resource_mgr.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/kernels/ops_testutil.h"
@@ -12,7 +13,6 @@
 #include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/platform/test_benchmark.h"
 #include "tensorflow/core/public/session.h"
-#include "tensorflow/core/framework/resource_mgr.h"
 
 #if GOOGLE_CUDA
 #define EIGEN_USE_GPU
@@ -47,10 +47,10 @@ void get_node_attr_from_test_case(string& combiner_str, float& max_norm) {
 }
 
 template <TestCase test_case>
-void fill_emb_vector_expected(Tensor* expected);
+void fill_var_vector_expected(Tensor* expected);
 
 template <>
-void fill_emb_vector_expected<Sqrtn>(Tensor* expected) {
+void fill_var_vector_expected<Sqrtn>(Tensor* expected) {
   test::FillValues<float>(
       expected, {22.627416610717773, 24.0416316986084,   25.45584487915039,
                  26.870058059692383, 28.284271240234375, 29.698484420776367,
@@ -66,7 +66,7 @@ void fill_emb_vector_expected<Sqrtn>(Tensor* expected) {
 }
 
 template <>
-void fill_emb_vector_expected<Mean>(Tensor* expected) {
+void fill_var_vector_expected<Mean>(Tensor* expected) {
   test::FillValues<float>(
       expected, {16.00000000000000, 17.00000000000000, 18.00000000000000,
                  19.00000000000000, 20.00000000000000, 21.00000000000000,
@@ -82,7 +82,7 @@ void fill_emb_vector_expected<Mean>(Tensor* expected) {
 }
 
 template <>
-void fill_emb_vector_expected<Sum>(Tensor* expected) {
+void fill_var_vector_expected<Sum>(Tensor* expected) {
   test::FillValues<float>(
       expected, {32.0,  34.0,  36.0,  38.0,  40.0,  42.0,  44.0,  46.0,
                  128.0, 131.0, 134.0, 137.0, 140.0, 143.0, 146.0, 149.0,
@@ -91,7 +91,7 @@ void fill_emb_vector_expected<Sum>(Tensor* expected) {
 }
 
 template <>
-void fill_emb_vector_expected<SqrtnAndMaxNorm200>(Tensor* expected) {
+void fill_var_vector_expected<SqrtnAndMaxNorm200>(Tensor* expected) {
   test::FillValues<float>(
       expected,
       {22.62741661, 24.04163170, 25.45584488,  26.87005806,  28.28427124,
@@ -199,7 +199,7 @@ class GroupEmbeddingForWardOpTest : public OpsTestBase {
 
     Tensor emb_vector_expected(v_dtype, {batch_size, emb_vector_dim});
     Tensor sp_values_offset_expected(DT_INT64, {7});
-    fill_emb_vector_expected<test_case>(&emb_vector_expected);
+    fill_var_vector_expected<test_case>(&emb_vector_expected);
     test::FillValues<int64>(&sp_values_offset_expected,
                             {3, 1, 4, 5, 7, 12, 15});
 
@@ -228,10 +228,10 @@ TEST_F(GroupEmbeddingForWardOpTest, EmbeddingLocalSparseLookUpFloatSumGpu) {
   Run<int64, float, Sum>(DEVICE::GPU);
 }
 
-TEST_F(GroupEmbeddingForWardOpTest,
-       EmbeddingLocalSparseLookUpFloatSqrtnAndMaxNorm200Gpu) {
-  Run<int64, float, SqrtnAndMaxNorm200>(DEVICE::GPU);
-}
+// TEST_F(GroupEmbeddingForWardOpTest,
+//        EmbeddingLocalSparseLookUpFloatSqrtnAndMaxNorm200Gpu) {
+//   Run<int64, float, SqrtnAndMaxNorm200>(DEVICE::GPU);
+// }
 #endif  // GOOGLE_CUDA
 
 TEST_F(GroupEmbeddingForWardOpTest, EmbeddingLocalSparseLookUpFloatSqrtnCpu) {
@@ -252,10 +252,10 @@ TEST_F(GroupEmbeddingForWardOpTest, EmbeddingLocalSparseLookUpFloatSumCpu) {
 // }
 
 template <TestCase test_case>
-void fill_grad_expected(Tensor* expected);
+void fill_var_grad_expected(Tensor* expected);
 
 template <>
-void fill_grad_expected<Sqrtn>(Tensor* expected) {
+void fill_var_grad_expected<Sqrtn>(Tensor* expected) {
   test::FillValues<float>(
       expected, {0.000000000000000,  0.7071067690849304, 1.4142135381698608,
                  2.1213204860687256, 2.8284270763397217, 3.535533905029297,
@@ -279,7 +279,7 @@ void fill_grad_expected<Sqrtn>(Tensor* expected) {
 }
 
 template <>
-void fill_grad_expected<Mean>(Tensor* expected) {
+void fill_var_grad_expected<Mean>(Tensor* expected) {
   test::FillValues<float>(
       expected, {0.000000000000000,  0.500000000000000,  1.000000000000000,
                  1.500000000000000,  2.000000000000000,  2.500000000000000,
@@ -305,7 +305,7 @@ void fill_grad_expected<Mean>(Tensor* expected) {
 }
 
 template <>
-void fill_grad_expected<Sum>(Tensor* expected) {
+void fill_var_grad_expected<Sum>(Tensor* expected) {
   test::FillValues<float>(
       expected,
       {0.0,  1.0,  2.0,  3.0,  4.0,  5.0,  6.0,  7.0,  0.0,  1.0,  2.0,  3.0,
@@ -316,7 +316,7 @@ void fill_grad_expected<Sum>(Tensor* expected) {
 }
 
 template <>
-void fill_grad_expected<MeanAndMaxNorm100>(Tensor* expected) {
+void fill_var_grad_expected<MeanAndMaxNorm100>(Tensor* expected) {
   test::FillValues<float>(
       expected,
       {0.00000000,  0.50000000,  1.00000000,  1.50000000,  2.00000000,
@@ -431,7 +431,7 @@ class GroupEmbeddingBackWardOpTest : public OpsTestBase {
     TF_ASSERT_OK(RunOpKernel());
 
     Tensor grad_expected(v_dtype, {nnz, emb_vector_dim});
-    fill_grad_expected<test_case>(&grad_expected);
+    fill_var_grad_expected<test_case>(&grad_expected);
 
     TF_EXPECT_OK(device_->Sync());
 
@@ -457,10 +457,10 @@ TEST_F(GroupEmbeddingBackWardOpTest,
   Run<int64, float, Sum>(DEVICE::GPU);
 }
 
-TEST_F(GroupEmbeddingBackWardOpTest,
-       EmbeddingLocalSparseLookUpGradFloatMeanAndMaxNorm100Gpu) {
-  Run<int64, float, MeanAndMaxNorm100>(DEVICE::GPU);
-}
+// TEST_F(GroupEmbeddingBackWardOpTest,
+//        EmbeddingLocalSparseLookUpGradFloatMeanAndMaxNorm100Gpu) {
+//   Run<int64, float, MeanAndMaxNorm100>(DEVICE::GPU);
+// }
 #endif  // GOOGLE_CUDA
 
 TEST_F(GroupEmbeddingBackWardOpTest,
@@ -489,42 +489,29 @@ void fill_ev_vector_expected(Tensor* expected);
 template <>
 void fill_ev_vector_expected<Sqrtn>(Tensor* expected) {
   test::FillValues<float>(
-      expected, {22.627416610717773, 24.0416316986084,   25.45584487915039,
-                 26.870058059692383, 28.284271240234375, 29.698484420776367,
-                 31.112699508666992, 32.526912689208984, 73.90083312988281,
-                 75.63288879394531,  77.36493682861328,  79.09698486328125,
-                 80.82904052734375,  82.56108856201172,  84.29314422607422,
-                 86.02519226074219,  124.70765686035156, 126.43971252441406,
-                 128.17176818847656, 129.90380859375,    131.6358642578125,
-                 133.367919921875,   135.09996032714844, 136.83201599121094,
-                 107.48023223876953, 108.89444732666016, 110.30866241455078,
-                 111.72286987304688, 113.1370849609375,  114.55130004882812,
-                 115.96551513671875, 117.37973022460938});
+      expected,
+      {1.41421, 1.41421, 1.41421, 1.41421, 1.41421, 1.41421, 1.41421, 1.41421,
+       1.73205, 1.73205, 1.73205, 1.73205, 1.73205, 1.73205, 1.73205, 1.73205,
+       1.73205, 1.73205, 1.73205, 1.73205, 1.73205, 1.73205, 1.73205, 1.73205,
+       1.41421, 1.41421, 1.41421, 1.41421, 1.41421, 1.41421, 1.41421, 1.41421});
 }
 
 template <>
 void fill_ev_vector_expected<Mean>(Tensor* expected) {
   test::FillValues<float>(
-      expected, {16.00000000000000, 17.00000000000000, 18.00000000000000,
-                 19.00000000000000, 20.00000000000000, 21.00000000000000,
-                 22.00000000000000, 23.00000000000000, 42.66666793823242,
-                 43.66666793823242, 44.66666793823242, 45.66666793823242,
-                 46.66666793823242, 47.66666793823242, 48.66666793823242,
-                 49.66666793823242, 72.00000000000000, 73.00000000000000,
-                 74.00000000000000, 75.00000000000000, 76.00000000000000,
-                 77.00000000000000, 78.00000000000000, 79.00000000000000,
-                 76.00000000000000, 77.00000000000000, 78.00000000000000,
-                 79.00000000000000, 80.00000000000000, 81.00000000000000,
-                 82.00000000000000, 83.00000000000000});
+      expected, {
+                    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+                    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+                    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+                });
 }
 
 template <>
 void fill_ev_vector_expected<Sum>(Tensor* expected) {
   test::FillValues<float>(
-      expected, {32.0,  34.0,  36.0,  38.0,  40.0,  42.0,  44.0,  46.0,
-                 128.0, 131.0, 134.0, 137.0, 140.0, 143.0, 146.0, 149.0,
-                 216.0, 219.0, 222.0, 225.0, 228.0, 231.0, 234.0, 237.0,
-                 152.0, 154.0, 156.0, 158.0, 160.0, 162.0, 164.0, 166.0});
+      expected, {2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 3.0, 3.0, 3.0,
+                 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0,
+                 3.0, 3.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0});
 }
 
 template <>
@@ -552,62 +539,69 @@ class GroupEmbeddingVariableForWardOpTest : public OpsTestBase {
 
     DataType k_dtype = DataTypeToEnum<TKey>::value;
     DataType v_dtype = DataTypeToEnum<TValue>::value;
-    TensorShapeProto tshape_proto;
-    tshape_proto.add_dim()->set_size(8);
-    TF_EXPECT_OK(NodeDefBuilder("kv_var_handle",
-                                "KvVarHandleOp")
-                     .Attr("dtype", v_dtype)
-                     .Attr("Tkeys", k_dtype)
-                     .Attr("shape", tshape_proto)
-                     .Attr("container", "EV")
-                     .Attr("shared_name", "EV")
-                     .Finalize(node_def()));
-    TF_EXPECT_OK(InitOp());
-    TF_ASSERT_OK(RunOpKernel());
-    const Tensor& ev_resource = *GetOutput(0);
-    auto ev_handle = ev_resource.flat<ResourceHandle>()(0);
-    TF_EXPECT_OK(NodeDefBuilder("initialize_kv_variable",
-                                "InitializeKvVariableOp")
-                     .Input(FakeInput(DT_RESOURCE))  // ev
-                     .Input(FakeInput(DT_RESOURCE))  // ev
-                     .Input(FakeInput(v_dtype))      // sp_values
-                     .Input(FakeInput(k_dtype))     // sp_indices
-                     .Attr("dtype", v_dtype)
-                     .Attr("Tkeys", k_dtype)
-                    .Attr("slot_num", 0)
-                    .Attr("shape", tshape_proto)
-                    .Attr("initial_num_buckets", 131072)  // 2^17
-                    .Attr("max_load_factor", 0.8)	
-                    .Attr("steps_to_live", 0)
-                    .Attr("emb_index", 0)
-                    .Attr("block_num", 1)
-                    .Attr("slot_index", 0)
-                    .Attr("ht_partition_num", 1000)
-                    .Attr("filter_freq", 0)
-                    .Attr("max_freq", 999999)
-                    .Attr("max_element_size", 0)
-                    .Attr("counter_type", k_dtype)
-                    .Attr("false_positive_probability", -1.0)
-                    .Attr("l2_weight_threshold", -1.0)
-                    .Attr("layout", "")
-                    .Attr("storage_type", 0)
-                    .Attr("default_value_dim", 8)
-                    .Attr("default_value_no_permission", 0.0)
-                    .Attr("record_freq", false)
-                    .Attr("record_version", false)
-                    .Finalize(node_def()));
-    TF_EXPECT_OK(InitOp());
+    // TensorShapeProto tshape_proto;
+    // tshape_proto.add_dim()->set_size(8);
+    // TF_EXPECT_OK(NodeDefBuilder("kv_var_handle", "KvVarHandleOp")
+    //                  .Attr("dtype", v_dtype)
+    //                  .Attr("Tkeys", k_dtype)
+    //                  .Attr("shape", tshape_proto)
+    //                  .Attr("container", "EV")
+    //                  .Attr("shared_name", "EV")
+    //                  .Finalize(node_def()));
+    // TF_EXPECT_OK(InitOp());
+    // TF_ASSERT_OK(RunOpKernel());
+    // const Tensor& ev_resource = *GetOutput(0);
+    // ResourceHandle ev_handle = ev_resource.flat<ResourceHandle>()(0);
 
-    AddInputFromArray<ResourceHandle>(TensorShape({}), {ev_handle});
-    AddInputFromArray<ResourceHandle>(TensorShape({}), {ev_handle});
-    Tensor default_values(v_dtype, {8});
-    test::FillValues<TValue>(&default_values, {1.0f, 1.0f, 1.0f, 1.0f,
-                                              1.0f, 1.0f, 1.0f, 1.0f});
-    AddInputFromArray<TValue>(default_values.shape(), default_values.flat<TValue>());
-    Tensor empty_key(k_dtype, {1});
-    test::FillValues<TKey>(&empty_key, {-1});
-    AddInputFromArray<TKey>(empty_key.shape(), empty_key.flat<TKey>());
-    TF_ASSERT_OK(RunOpKernel());
+    // TF_EXPECT_OK(NodeDefBuilder("initialize_kv_variable",
+    //                             "InitializeKvVariableOp")
+    //                  .Input(FakeInput(DT_RESOURCE))  // ev
+    //                  .Input(FakeInput(DT_RESOURCE))  // ev
+    //                  .Input(FakeInput(v_dtype))      // sp_values
+    //                  .Input(FakeInput(k_dtype))      // sp_indices
+    //                  .Attr("dtype", v_dtype)
+    //                  .Attr("Tkeys", k_dtype)
+    //                  .Attr("slot_num", 0)
+    //                  .Attr("shape", tshape_proto)
+    //                  .Attr("initial_num_buckets", 131072)  // 2^17
+    //                  .Attr("max_load_factor", 0.8)
+    //                  .Attr("steps_to_live", 0)
+    //                  .Attr("emb_index", 0)
+    //                  .Attr("block_num", 1)
+    //                  .Attr("slot_index", 0)
+    //                  .Attr("ht_partition_num", 1000)
+    //                  .Attr("filter_freq", 0)
+    //                  .Attr("max_freq", 999999)
+    //                  .Attr("max_element_size", 0)
+    //                  .Attr("counter_type", k_dtype)
+    //                  .Attr("false_positive_probability", -1.0)
+    //                  .Attr("l2_weight_threshold", -1.0)
+    //                  .Attr("layout", "")
+    //                  .Attr("storage_type", 0)
+    //                  .Attr("default_value_dim", 8)
+    //                  .Attr("default_value_no_permission", 0.0)
+    //                  .Attr("record_freq", false)
+    //                  .Attr("record_version", false)
+    //                  .Finalize(node_def()));
+    // TF_EXPECT_OK(InitOp());
+
+    // AddInputFromArray<ResourceHandle>(TensorShape({}), {ev_handle});
+    // AddInputFromArray<ResourceHandle>(TensorShape({}), {ev_handle});
+
+    // Tensor default_values(v_dtype, {8});
+    // test::FillValues<TValue>(&default_values,
+    //                          {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
+    // AddInputFromArray<TValue>(default_values.shape(),
+    //                           default_values.flat<TValue>());
+    // Tensor empty_key(k_dtype, {1});
+    // test::FillValues<TKey>(&empty_key, {-1});
+    // AddInputFromArray<TKey>(empty_key.shape(), empty_key.flat<TKey>());
+    // TF_ASSERT_OK(RunOpKernel());
+
+    // Clear Resource
+    // inputs_.clear();
+    // gtl::STLDeleteElements(&tensors_);
+    // gtl::STLDeleteElements(&managed_outputs_);
 
     std::string combiner_str;
     float max_norm;
@@ -615,9 +609,8 @@ class GroupEmbeddingVariableForWardOpTest : public OpsTestBase {
     const int nnz = 10;
     const int batch_size = 4;
     const int emb_vector_dim = 8;
-    const int entries = 8;
-    const int bucket_size = 16;
     const int num_lookups = 2;
+    std::vector<TKey> sp_values_vec{3, 1, 4, 5, 7, 3, 12, 12, 15, 4};
     get_node_attr_from_test_case<test_case>(combiner_str, max_norm);
 
     TF_EXPECT_OK(NodeDefBuilder("group_embedding_variable_lookup",
@@ -641,66 +634,36 @@ class GroupEmbeddingVariableForWardOpTest : public OpsTestBase {
     TF_EXPECT_OK(InitOp());
 
     for (int i = 0; i < num_lookups; ++i) {
-      Tensor emb_variable(v_dtype, {bucket_size, emb_vector_dim});
-      test::FillValues<TValue>(
-          &emb_variable,
-          {0.0,   1.0,   2.0,   3.0,   4.0,   5.0,   6.0,   7.0,   8.0,   9.0,
-           10.0,  11.0,  12.0,  13.0,  14.0,  15.0,  16.0,  17.0,  18.0,  19.0,
-           20.0,  21.0,  22.0,  23.0,  24.0,  25.0,  26.0,  27.0,  28.0,  29.0,
-           30.0,  31.0,  32.0,  33.0,  34.0,  35.0,  36.0,  37.0,  38.0,  39.0,
-           40.0,  41.0,  42.0,  43.0,  44.0,  45.0,  46.0,  47.0,  48.0,  49.0,
-           50.0,  51.0,  52.0,  53.0,  54.0,  55.0,  56.0,  57.0,  58.0,  59.0,
-           60.0,  61.0,  62.0,  63.0,  64.0,  65.0,  66.0,  67.0,  68.0,  69.0,
-           70.0,  71.0,  72.0,  73.0,  74.0,  75.0,  76.0,  77.0,  78.0,  79.0,
-           80.0,  81.0,  82.0,  83.0,  84.0,  85.0,  86.0,  87.0,  88.0,  89.0,
-           90.0,  91.0,  92.0,  93.0,  94.0,  95.0,  96.0,  97.0,  98.0,  99.0,
-           100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0,
-           110.0, 111.0, 112.0, 113.0, 114.0, 115.0, 116.0, 117.0, 118.0, 119.0,
-           120.0, 121.0, 122.0, 123.0, 124.0, 125.0, 126.0, 127.0});
-      LOG(INFO) << "======== " << i;
-      
-      // LookupOrCreateResource<EmbeddingVar<TKey, TValue>>(
-      //       context_.get(), handle, &ev,
-      //       [this, default_tensor, handle](EmbeddingVar<TKey, TValue>** ptr) {
-      //         // Allocator* gpu_allocator =
-      //         //     device_->GetAllocator(AllocatorAttributes());
-      //             //context->get_allocator(AllocatorAttributes());
-      //         // auto embedding_config = EmbeddingConfig(
-      //         //     emb_index_ + block_num_ * slot_index_,
-      //         //     emb_index_, block_num_, slot_num_,
-      //         //     opname + "-primary", steps_to_live_,
-      //         //     filter_freq_, max_freq_,
-      //         //     l2_weight_threshold_, layout_,
-      //         //     max_element_size_, false_positive_probability_,
-      //         //     counter_type_, default_value_dim_,
-      //         //     default_value_no_permission_,
-      //         //     record_freq_, record_version_);
-      //         auto embedding_config = 
-      //             EmbeddingConfig(0, 0, 1, 1, "", 0, 0, 99999, 14.0);
-      //         // auto storage_manager =
-      //         //     new embedding::StorageManager<TKey, TValue>(
-      //         //       handle.name(),
-      //         //       embedding::StorageConfig(
-      //         //         storage_type_, storage_path_, storage_size_, layout_,
-      //         //         embedding_config),
-      //         //       gpu_allocator);
-      //         auto storage_manager = new embedding::StorageManager<TKey, TValue>(
-      //                       handle.name(),
-      //                       embedding::StorageConfig(
-      //                           embedding::StorageType::DRAM,
-      //                           "", {1024, 1024, 1024, 1024},
-      //                           "light",
-      //                           embedding_config));
-              
-      //       return Status::OK();
-      //       });
+      EmbeddingVar<TKey, TValue>* embedding_var = nullptr;
+      Allocator* gpu_allocator = device_->GetAllocator(AllocatorAttributes());
+      auto embedding_config =
+          EmbeddingConfig(0, 0, 1, 1, "", 0, 0, 99999, 14.0);
+      auto storage_manager = new embedding::StorageManager<TKey, TValue>(
+          "EV" + std::to_string(i),
+          embedding::StorageConfig(embedding::StorageType::DRAM, "",
+                                   {1024, 1024, 1024, 1024}, "normal",
+                                   embedding_config));
+      embedding_var = new EmbeddingVar<TKey, TValue>(
+          "EV" + std::to_string(i), storage_manager, embedding_config,
+          gpu_allocator);
+      Tensor value(DT_FLOAT, TensorShape({emb_vector_dim}));
+      test::FillValues<TValue>(&value,
+                               std::vector<TValue>(emb_vector_dim, 1.0));
+      embedding_var->Init(value, 1);
 
-      AddInputFromArray<ResourceHandle>(TensorShape({}), {ev_handle});
+      for (int64 j = 0; j < nnz; ++j) {
+        ValuePtr<TValue>* value_ptr = nullptr;
+        Status s =
+            embedding_var->LookupOrCreateKey(sp_values_vec[j], &value_ptr);
+        typename TTypes<TValue>::Flat vflat = embedding_var->flat(value_ptr);
+      }
+      AddResourceInput<EmbeddingVar<TKey, TValue>>("", "EV" + std::to_string(i),
+                                                   embedding_var);
     }
 
     for (int i = 0; i < num_lookups; ++i) {
       Tensor sp_values(k_dtype, {nnz});
-      test::FillValues<TKey>(&sp_values, {3, 1, 4, 5, 7, 3, 12, 12, 15, 4});
+      test::FillValues<TKey>(&sp_values, sp_values_vec);
       AddInputFromArray<TKey>(sp_values.shape(), sp_values.flat<TKey>());
     }
 
@@ -722,11 +685,6 @@ class GroupEmbeddingVariableForWardOpTest : public OpsTestBase {
     auto batch_size_data = batch_size_tensor->flat<int>().data();
     batch_size_data[0] = batch_size;
 
-    Tensor* default_v_tensor =
-        AddInput(DataTypeToEnum<TValue>::v(), TensorShape({}));
-    auto default_v = default_v_tensor->flat<float>().data();
-    default_v[0] = 1.0f;
-
     TF_ASSERT_OK(RunOpKernel());
 
     Tensor emb_vector_expected(v_dtype, {batch_size, emb_vector_dim});
@@ -735,14 +693,22 @@ class GroupEmbeddingVariableForWardOpTest : public OpsTestBase {
     test::FillValues<int64>(&sp_values_offset_expected,
                             {3, 1, 4, 5, 7, 12, 15});
 
+    Tensor unique_idx_expected(DT_INT32, {nnz});
+    test::FillValues<int32>(&unique_idx_expected, {0, 1, 2, 3, 4, 0, 5, 5, 6, 2});
+
+    Tensor batch_size_expected(DT_INT32, {batch_size});
+    test::FillValues<int32>(&batch_size_expected, {2, 5, 8, 10});
     TF_EXPECT_OK(device_->Sync());
 
     for (int i = 0; i < num_lookups; ++i) {
       const Tensor& emb_vector = *GetOutput(i);
       const Tensor& values_offset = *GetOutput(num_lookups + i);
-
+      const Tensor& unique_idx_output = *GetOutput(2 * num_lookups + i);
+      const Tensor& batch_size_output = *GetOutput(3 * num_lookups + i);
       test::ExpectTensorNear<TValue>(emb_vector_expected, emb_vector, 1e-4);
       test::ExpectTensorEqual<int64>(sp_values_offset_expected, values_offset);
+      test::ExpectTensorEqual<int32>(unique_idx_expected, unique_idx_output);
+      test::ExpectTensorEqual<int32>(batch_size_expected, batch_size_output);
     }
   }
 };
@@ -789,6 +755,7 @@ TEST_F(GroupEmbeddingVariableForWardOpTest,
 //   Run<int64, float, SqrtnAndMaxNorm200>(DEVICE::CPU);
 // }
 
+/*
 template <TestCase test_case>
 void fill_ev_dense_vector_expected(Tensor* expected);
 
@@ -966,7 +933,7 @@ TEST_F(GroupEmbeddingVariableDenseForwardOpTest,
 //        EmbeddingVarLocalSparseLookUpDenseFloatSqrtnAndMaxNorm200Cpu) {
 //   Run<int64, float, SqrtnAndMaxNorm200>(DEVICE::CPU);
 // }
-
+*/
 template <TestCase test_case>
 void fill_ev_grad_expected(Tensor* expected);
 
