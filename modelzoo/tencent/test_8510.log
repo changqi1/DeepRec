@@ -1,0 +1,30 @@
+2023-05-11 10:26:16.705338: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /usr/local/lib64
+2023-05-11 10:26:16.705387: I tensorflow/stream_executor/cuda/cudart_stub.cc:29] Ignore above cudart dlerror if you do not have a GPU set up on your machine.
+('P95 latency (ms) - 2.622770669404417; Average latency (ms) - 2.09 +\\- 0.23;', 2.622770669404417)
+2023-05-11 10:26:39.385321: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /usr/local/lib64
+2023-05-11 10:26:39.385363: I tensorflow/stream_executor/cuda/cudart_stub.cc:29] Ignore above cudart dlerror if you do not have a GPU set up on your machine.
+('P95 latency (ms) - 2.348309720400721; Average latency (ms) - 1.97 +\\- 0.21;', 2.348309720400721)
+2023-05-11 10:27:00.858385: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /usr/local/lib64
+2023-05-11 10:27:00.858427: I tensorflow/stream_executor/cuda/cudart_stub.cc:29] Ignore above cudart dlerror if you do not have a GPU set up on your machine.
+('P95 latency (ms) - 2.6545881060883403; Average latency (ms) - 2.08 +\\- 0.25;', 2.6545881060883403)
+2023-05-11 10:27:23.494962: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /usr/local/lib64
+2023-05-11 10:27:23.495006: I tensorflow/stream_executor/cuda/cudart_stub.cc:29] Ignore above cudart dlerror if you do not have a GPU set up on your machine.
+('P95 latency (ms) - 2.2150134784169495; Average latency (ms) - 1.92 +\\- 0.16;', 2.2150134784169495)
+2023-05-11 10:27:44.342213: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /usr/local/lib64
+2023-05-11 10:27:44.342258: I tensorflow/stream_executor/cuda/cudart_stub.cc:29] Ignore above cudart dlerror if you do not have a GPU set up on your machine.
+('P95 latency (ms) - 2.6438205270096664; Average latency (ms) - 2.10 +\\- 0.24;', 2.6438205270096664)
+2023-05-11 10:28:07.187972: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /usr/local/lib64
+2023-05-11 10:28:07.188010: I tensorflow/stream_executor/cuda/cudart_stub.cc:29] Ignore above cudart dlerror if you do not have a GPU set up on your machine.
+('P95 latency (ms) - 2.650357224047184; Average latency (ms) - 2.08 +\\- 0.26;', 2.650357224047184)
+2023-05-11 10:28:29.829050: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /usr/local/lib64
+2023-05-11 10:28:29.829089: I tensorflow/stream_executor/cuda/cudart_stub.cc:29] Ignore above cudart dlerror if you do not have a GPU set up on your machine.
+('P95 latency (ms) - 2.6022547041065995; Average latency (ms) - 2.06 +\\- 0.23;', 2.6022547041065995)
+2023-05-11 10:28:52.129090: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /usr/local/lib64
+2023-05-11 10:28:52.129135: I tensorflow/stream_executor/cuda/cudart_stub.cc:29] Ignore above cudart dlerror if you do not have a GPU set up on your machine.
+('P95 latency (ms) - 2.238221699371933; Average latency (ms) - 1.98 +\\- 0.16;', 2.238221699371933)
+2023-05-11 10:29:13.623720: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /usr/local/lib64
+2023-05-11 10:29:13.623757: I tensorflow/stream_executor/cuda/cudart_stub.cc:29] Ignore above cudart dlerror if you do not have a GPU set up on your machine.
+('P95 latency (ms) - 1.9691566820256414; Average latency (ms) - 1.82 +\\- 0.11;', 1.9691566820256414)
+2023-05-11 10:29:33.557718: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /usr/local/lib64
+2023-05-11 10:29:33.557759: I tensorflow/stream_executor/cuda/cudart_stub.cc:29] Ignore above cudart dlerror if you do not have a GPU set up on your machine.
+('P95 latency (ms) - 2.0028558559715743; Average latency (ms) - 1.88 +\\- 0.10;', 2.0028558559715743)
