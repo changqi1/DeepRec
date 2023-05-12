@@ -1,6 +1,0 @@
-FROM tensorflow/tensorflow:2.12.0
-
-RUN http_proxy=http://child-prc.intel.com:913 https_proxy=http://child-prc.intel.com:913 pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -U tensorboard-plugin-profile
-
-# ENTRYPOINT [/usr/local/bin/tensorboard, --logdir, /tmp/tensorboard, --bind_all]
-
