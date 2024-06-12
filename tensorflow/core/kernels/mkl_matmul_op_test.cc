@@ -254,10 +254,7 @@ static Graph* FusedMatMul(const string& kind, int m, int k, int n,
                     .Attr("transpose_a", transpose_a)
                     .Attr("transpose_b", transpose_b);
 
-  isDefault ? nodeBuilder : nodeBuilder.Attr("_kernel", "MklLayoutDependentOp")
-                                       .Input(not_mkl_shape)
-                                       .Input(not_mkl_shape)
-                                       .Input(args_not_mkl);
+  isDefault ? nodeBuilder : nodeBuilder.Attr("_kernel", "MklNameChangeOp");
 
   TF_CHECK_OK(nodeBuilder.Finalize(g, nullptr));
 
