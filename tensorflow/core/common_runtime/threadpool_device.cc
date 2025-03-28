@@ -18,6 +18,7 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/local_device.h"
 #include "tensorflow/core/common_runtime/scoped_allocator.h"
 #include "tensorflow/core/common_runtime/scoped_allocator_mgr.h"
+#include "tensorflow/core/common_runtime/tensorpool_mkl_allocator.h"
 #include "tensorflow/core/framework/allocator.h"
 #include "tensorflow/core/framework/allocator_registry.h"
 #include "tensorflow/core/framework/device_base.h"
@@ -141,17 +142,17 @@ class MklCPUAllocatorFactory : public AllocatorFactory {
  public:
   bool NumaEnabled() override { return false; }
 
-  Allocator* CreateAllocator() override { return new TensorPoolAllocator; }
+  Allocator* CreateAllocator() override { return new TensorPoolMklAllocator; }
 
   // Note: Ignores numa_node, for now.
   virtual SubAllocator* CreateSubAllocator(int numa_node) {
-    return new TensorPoolSubAllocator(new TensorPoolAllocator);
+    return new TensorPoolSubAllocator(new TensorPoolMklAllocator);
   }
 
  private:
   class TensorPoolSubAllocator : public SubAllocator {
    public:
-    explicit TensorPoolSubAllocator(TensorPoolAllocator* allocator)
+    explicit TensorPoolSubAllocator(TensorPoolMklAllocator* allocator)
       : SubAllocator({}, {}), allocator_(allocator) {}
 
     void* Alloc(size_t alignment, size_t num_bytes) override {
@@ -163,7 +164,7 @@ class MklCPUAllocatorFactory : public AllocatorFactory {
     }
 
    private:
-    TensorPoolAllocator* allocator_;
+    TensorPoolMklAllocator* allocator_;
   };
 };
 

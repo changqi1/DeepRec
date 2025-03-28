@@ -110,17 +110,17 @@ class TensorPoolAllocator : public Allocator {
     SubAllocator* sub_allocator_;
   };
 
- private:
+protected:
+  bool stats_;
+  std::unique_ptr<SubAllocator> sub_allocator_;
   void* BigAllocate(size_t alignment, size_t num_bytes);
   void* BigAllocateStatistic(size_t alignment, size_t num_bytes);
   void BigDeallocate(Header* header);
   
  private:
-  bool stats_;
   std::atomic_bool inited_;
   std::atomic_bool initing_;
 
-  std::unique_ptr<SubAllocator> sub_allocator_;
   MemoryPlannerBase* mem_planner_;
  
   size_t large_bin_index_;
